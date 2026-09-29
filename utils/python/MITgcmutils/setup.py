@@ -20,4 +20,5 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     install_requires=["numpy","matplotlib"],
+    extras_require={"runoff": ["netCDF4"]},
 )
