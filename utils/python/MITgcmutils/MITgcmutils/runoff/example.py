@@ -229,6 +229,9 @@ def write_example(path, **overrides):
     # --- file ---------------------------------------------------------------
     ds = netCDF4.Dataset(path, "w", format=fmt)
     try:
+        # Text attributes as NC_CHAR (the Fortran reader can't read NC_STRING,
+        # rule S08). This is netCDF4's default; set it explicitly.
+        ds.set_ncstring_attrs(False)
         # global attributes: model-read first, then discovery
         g = {"Conventions": S.CONVENTIONS,
              "mitgcm_runoff_schema_version": S.SCHEMA_VERSION,

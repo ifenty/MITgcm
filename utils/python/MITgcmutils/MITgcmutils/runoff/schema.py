@@ -89,6 +89,22 @@ REQUIRED_TIMESERIES = (FLUX_VAR,)
 #: ``<NAME>`` of ``runoff_ptracer_<NAME>``: letters, digits and ``_``.
 PTRACER_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
+#: Variables the model reads (section 1): these names, and every variable whose
+#: name starts with ``runoff_``. They must not be packed (S07). ``target_lon``,
+#: ``target_lat`` and user-added ``target_*`` variables are not model-read.
+MODEL_READ_VARIABLES = ("time", "time_bnds", "source_id", "target_source",
+                        "target_cell", "target_fraction", "target_level",
+                        "target_cell_area")
+MODEL_READ_PREFIXES = ("runoff_",)
+PACKING_ATTRS = ("scale_factor", "add_offset")
+
+#: S08: model-read text attributes must be NC_CHAR, not NC_STRING (section 1):
+#: every ``mitgcm_*`` global text attribute, these attributes of ``time`` and
+#: ``time_bnds``, and ``units`` of every ``runoff_*`` variable.
+MODEL_READ_TIME_ATTRS = ("units", "calendar")
+NC_CHAR = 2      # netCDF external type codes (netcdf.h)
+NC_STRING = 12
+
 #: Index variables carry no ``units`` attribute (section 6.2).
 INDEX_VARIABLES = ("target_source", "target_cell", "target_level", "alias_source")
 
@@ -178,8 +194,9 @@ TEMPERATURE_RANGE = (-2.5, 40.0)
 #: D06: warning threshold of ``runoff_salinity``.
 SALINITY_MAX = 45.0
 #: The single time-equality tolerance (section 7): contiguous bounds (M04),
-#: fixed spacing, month/year edges and annual coverage (M05), yearly-file
-#: limits (M06). It absorbs only floating-point representation error.
+#: fixed spacing, month/year edges, midpoints and annual coverage (M05),
+#: yearly-file limits (M06), file-to-file continuity and yearly start offsets
+#: (X01). It absorbs only floating-point representation error.
 TIME_EQUAL_TOL_SECONDS = 1e-3
 
 # ---------------------------------------------------------------------------
@@ -201,6 +218,7 @@ RECOMMENDED_GLOBAL_ATTRS = (
 #: Rule id -> level, for every rule of schema section 9.
 RULES = {
     "S01": "E", "S02": "E", "S03": "E", "S04": "E", "S05": "E", "S06": "I",
+    "S07": "E", "S08": "E",
     "G01": "E",
     "I01": "E", "I02": "E", "I03": "W", "I04": "W",
     "A01": "E", "A02": "W",

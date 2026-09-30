@@ -22,12 +22,23 @@ or I/O problem (unreadable file, missing grid file, unwritable JSON).
 
 Implementation notes that the schema leaves to the checker:
 
-* All variables are read with ``set_auto_mask(False)`` and
-  ``set_auto_chartostring(False)``, so masking never hides a fill value. A
-  value counts as missing when it is NaN, equals the variable's
-  ``_FillValue`` (or, without that attribute, the netCDF default fill of the
-  variable's type, which is what unwritten records read as), or equals a
-  ``missing_value``.
+* All variables are read with ``set_auto_maskandscale(False)`` and
+  ``set_auto_chartostring(False)``: netCDF4 neither masks nor unpacks, so the
+  checker sees the stored values, exactly as the Fortran reader does.
+  ``scale_factor``/``add_offset`` on a model-read variable (``time``,
+  ``time_bnds``, ``source_id``, ``target_source``, ``target_cell``,
+  ``target_fraction``, ``target_level``, ``target_cell_area``, ``runoff_*``) is
+  an error (S07), and fill and range checks then apply to the stored values.
+  ``target_lon``/``target_lat`` and user variables may be packed. A value counts as
+  missing when it is NaN, equals the variable's ``_FillValue`` (or, without
+  that attribute, the netCDF default fill of the variable's type, which is
+  what unwritten records read as), or equals a ``missing_value``.
+* S08 needs the stored type of an attribute (NC_CHAR or NC_STRING), which
+  netCDF4-python does not expose. It is read with ``nc_inq_atttype`` from the
+  libnetcdf that netCDF4 loaded, through :mod:`ctypes`, on a second read-only
+  open of the file. If that library can't be loaded, the attribute types are
+  not checked and S08 is reported as a W finding instead (exit status 1 only
+  with ``--strict``).
 * Variable-length strings: an unwritten element reads as ``""``, the NC_STRING
   default fill, so an empty string counts as missing. Char arrays are decoded
   after removing trailing NUL padding; ``source_id`` also has trailing blanks
@@ -41,8 +52,12 @@ Implementation notes that the schema leaves to the checker:
   matched ignoring letter case; across files (X01) calendars compare by their
   MITgcm mapping, so ``standard`` and ``gregorian`` files can be combined.
 * ``runoff_temperature`` fill and NaN mean "surface temperature" and are not
-  range-checked (D04); ±Inf is never a missing-value marker and is an error
-  (D09).
+  range-checked (D04); ±Inf is never a missing-value marker: every ±Inf value,
+  and a ``_FillValue``/``missing_value`` of ±Inf, is an error (D09).
+* X01 continuity: each file's first ``time_bnds`` start must equal the previous
+  file's last end, so every file of a multi-file set needs ``time_bnds``.
+  ``_YYYY`` files must also share one start offset from 1 January of the
+  year in their name.
 * U01 requires the units listed in :data:`schema.TABLE_UNITS` on those schema
   variables when present, and forbids units on index variables; user-added
   ``*_lon``/``*_lat`` variables are not checked.
@@ -283,6 +298,106 @@ def _value_label(v, is_fill):
     return "{0:.9g}".format(v)
 
 
+def _model_read(name):
+    """True for variables the model reads (schema section 1)."""
+    return name in S.MODEL_READ_VARIABLES or name.startswith(S.MODEL_READ_PREFIXES)
+
+
+_LIBNETCDF = []   # cache: [ctypes library or None]
+
+
+def _libnetcdf():
+    """The libnetcdf shared library netCDF4 uses, via ctypes, or None.
+
+    Prefers the copy already mapped into this process (Linux ``/proc``), then
+    ``ctypes.util.find_library("netcdf")``.
+    """
+    if _LIBNETCDF:
+        return _LIBNETCDF[0]
+    import ctypes
+    import ctypes.util
+    import netCDF4  # noqa: F401 - make sure netCDF4's libnetcdf is loaded
+    candidates = []
+    try:
+        with open("/proc/self/maps") as f:
+            candidates += sorted({ln.split()[-1] for ln in f
+                                  if "libnetcdf" in ln and ln.split()[-1].startswith("/")})
+    except OSError:
+        pass
+    found = ctypes.util.find_library("netcdf")
+    if found:
+        candidates.append(found)
+    lib = None
+    for path in candidates:
+        try:
+            lib = ctypes.CDLL(path)
+            for fn in ("nc_open", "nc_close", "nc_inq_varid", "nc_inq_atttype"):
+                getattr(lib, fn)
+            break
+        except (OSError, AttributeError):
+            lib = None
+    _LIBNETCDF.append(lib)
+    return lib
+
+
+def _attr_types(path, queries):
+    """Stored netCDF types of attributes, ``{(variable or None, name): nc_type}``.
+
+    Opens ``path`` read-only a second time through libnetcdf. Returns None when
+    the library can't be loaded (including a loader failure) or the file can't
+    be opened this way. Attributes that don't exist are left out.
+    """
+    import ctypes
+    try:
+        lib = _libnetcdf()
+    except Exception:  # noqa: BLE001 - any loader failure means "not checked"
+        lib = None
+    if lib is None:
+        return None
+    ncid = ctypes.c_int()
+    if lib.nc_open(os.fsencode(path), 0, ctypes.byref(ncid)) != 0:   # NC_NOWRITE
+        return None
+    out = {}
+    try:
+        for var, att in queries:
+            varid = ctypes.c_int(-1)                                   # NC_GLOBAL
+            if var is not None and lib.nc_inq_varid(
+                    ncid, var.encode("utf-8"), ctypes.byref(varid)) != 0:
+                continue
+            xtype = ctypes.c_int()
+            if lib.nc_inq_atttype(ncid, varid, att.encode("utf-8"),
+                                  ctypes.byref(xtype)) == 0:
+                out[(var, att)] = xtype.value
+    finally:
+        lib.nc_close(ncid)
+    return out
+
+
+def _check_attr_types(ctx):
+    """S08: model-read text attributes are NC_CHAR, not NC_STRING."""
+    ds = ctx.ds
+    queries = [(None, a) for a in ds.ncattrs() if a.startswith(S.RESERVED_ATTR_PREFIX)]
+    for name in ("time", "time_bnds"):
+        if name in ds.variables:
+            queries += [(name, a) for a in S.MODEL_READ_TIME_ATTRS
+                        if a in ds.variables[name].ncattrs()]
+    for name, var in ds.variables.items():
+        if name.startswith("runoff_") and "units" in var.ncattrs():
+            queries.append((name, "units"))
+    types = _attr_types(ctx.path, queries)
+    if types is None:
+        ctx.add("S08", "attribute types not checked: libnetcdf could not be loaded "
+                "through ctypes to read them, so NC_STRING model-read text "
+                "attributes can't be detected", level="W")
+        return
+    for (var, att), xtype in types.items():
+        if xtype == S.NC_STRING:
+            what = "global attribute" if var is None else "attribute"
+            ctx.add("S08", "{0} '{1}' is stored as NC_STRING; the Fortran reader "
+                    "(NF_GET_ATT_TEXT) needs a char (NC_CHAR) attribute".format(what, att),
+                    var)
+
+
 def _days_in_month(year, month, calendar):
     """Length of a month in one of the allowed CF calendars."""
     if calendar == "360_day":
@@ -359,7 +474,8 @@ class _FileContext:
     # -- collection -------------------------------------------------------
 
     def add(self, rule, text, variable=None, source_index=None, record=None,
-            time=None):
+            time=None, level=None):
+        """Add a finding; ``level`` overrides the rule's level (S08 not checked: W)."""
         key = (rule, variable)
         n = self.counts.get(key, 0) + 1
         self.counts[key] = n
@@ -372,7 +488,7 @@ class _FileContext:
                 sid = self.ids[source_index]
         prefix = self.path + ": " + (variable + ": " if variable else "")
         self.report.findings.append(Finding(
-            rule, S.RULES[rule], prefix + text, self.path, variable, sid,
+            rule, level or S.RULES[rule], prefix + text, self.path, variable, sid,
             source_index, None if record is None else int(record),
             None if time is None else float(time)))
 
@@ -532,6 +648,19 @@ def _check_structure(ctx):
     missing = [a for a in S.RECOMMENDED_GLOBAL_ATTRS if a not in attrs]
     if missing:
         ctx.add("S06", "recommended global attributes missing: " + ", ".join(missing))
+
+    # S07: no packing of model-read variables
+    for name, var in ds.variables.items():
+        if not _model_read(name):
+            continue
+        packing = [a for a in S.PACKING_ATTRS if a in var.ncattrs()]
+        if packing:
+            ctx.add("S07", "carries {0}; the model reads stored values without "
+                    "unpacking, so model-read variables must not be packed (values "
+                    "are checked as stored)".format(" and ".join(
+                        "{0} = {1}".format(a, np.asarray(var.getncattr(a)).tolist())
+                        for a in packing)),
+                    name)
 
     # G01
     dims = {}
@@ -931,6 +1060,18 @@ def _check_sampling(ctx):
             prev = key
         ctx.add_many("M05", "time_bnds", bad, lambda item: {
             "text": item[1], "record": item[0], "time": ctx.tval(item[0])})
+        # exf interpolates between period midpoints and ignores the file's
+        # times, so time must be the midpoint of its bounds (section 3.1).
+        mid = 0.5 * (b[:, 0] + b[:, 1])
+        with np.errstate(invalid="ignore"):
+            off = bok & np.isfinite(t) & ~(np.abs(t - mid) * tax.factor
+                                           <= S.TIME_EQUAL_TOL_SECONDS)
+        ctx.add_many("M05", "time", np.nonzero(off)[0], lambda r: {
+            "text": "{0}: with mitgcm_time_sampling = '{1}', time must be the "
+                    "midpoint of its bounds, {2:.10g} ({3}); it differs by "
+                    "{4:.6g} s".format(ctx.tdesc(r), samp, mid[r], tax.label(mid[r]),
+                                       (t[r] - mid[r]) * tax.factor),
+            "record": r, "time": t[r]})
     if repeat == "annual":
         if b is None:
             if n == 1:
@@ -1010,6 +1151,17 @@ def _check_timeseries(ctx, max_block_bytes):
         elif su is None or su.strip() not in S.UNITS[name]:
             ctx.add("D01", "units {0!r} are not allowed; allowed: {1}".format(
                 units, ", ".join(S.UNITS[name])), name)
+        # D09: an infinite missing-value marker on the temperature
+        if name == S.TEMPERATURE_VAR:
+            for att in ("_FillValue", "missing_value"):
+                if att not in var.ncattrs():
+                    continue
+                with np.errstate(invalid="ignore"):
+                    vals = np.ravel(np.asarray(var.getncattr(att), dtype=np.float64))
+                if np.isinf(vals).any():
+                    ctx.add("D09", "{0} = {1} is infinite; Inf is never a missing-value "
+                            "marker (use a finite fill value or NaN)".format(
+                                att, vals.tolist()), name)
         # P01
         try:
             chunks = var.chunking()
@@ -1046,8 +1198,9 @@ def _stream_values(ctx, name, var, max_block_bytes):
                 checks.append(("D03", ~missing & (x < 0), "negative flux"))
             elif name == S.TEMPERATURE_VAR:
                 # Fill/NaN mean "surface temperature" and are skipped; Inf is
-                # never a missing-value marker, so it is an error (D09).
-                inf = np.isinf(x) & ~isfill
+                # never a missing-value marker, so every ±Inf is an error (D09),
+                # even when it equals an (itself invalid) Inf _FillValue.
+                inf = np.isinf(x)
                 present = ~(isfill | nan | inf)
                 checks.append(("D09", inf, "infinite temperature"))
                 checks.append(("D04", present & ((x < lo) | (x > hi)),
@@ -1232,8 +1385,21 @@ def _snapshot(ctx):
         if ctx.bounds is not None and ctx.bounds_ok.all():
             start, end = fields(ctx.bounds[0, 0]), fields(ctx.bounds[-1, 1])
         extent = (first_t, last_t, start, end)
+    # Yearly files: start offset of the first bound from 1 January of the
+    # year in the file name, in seconds, in the file's own calendar.
+    year = offset = None
+    m = S.YEARLY_FILE_RE.search(os.path.basename(ctx.path))
+    if m is not None:
+        year = int(m.group(1))
+        if extent is not None and extent[2] is not None:
+            try:
+                jan1 = ctx.tax.date2num(ctx.tax.datetime(year, 1, 1))
+                offset = (ctx.bounds[0, 0] - jan1) * ctx.tax.factor
+            except ValueError:
+                offset = None
     return {"path": ctx.path, "vars": set(ds.variables), "static": static,
-            "grid": grid, "calendar": ctx.calendar, "extent": extent}
+            "grid": grid, "calendar": ctx.calendar, "extent": extent,
+            "year": year, "offset": offset}
 
 
 def _same(a, b):
@@ -1288,11 +1454,14 @@ def _compare_snapshots(report, ref, cur):
 
 
 def _check_order(report, snaps):
-    """X01: records of consecutive files in the order given, without overlap.
+    """X01: consecutive files, in the order given, form one continuous series.
 
     Calendars must map to the same MITgcm calendar (``standard`` =
-    ``gregorian`` = ``proleptic_gregorian``; ``noleap`` = ``365_day``). Dates are
-    compared in the later file's calendar, with the section-7 time tolerance.
+    ``gregorian`` = ``proleptic_gregorian``; ``noleap`` = ``365_day``). Each
+    file's first ``time_bnds`` start must equal the previous file's last end;
+    without bounds, continuity can't be shown, which is itself an X01 error.
+    Dates are compared in the later file's calendar, with the section-7 time
+    tolerance. ``_YYYY`` files are then checked for a common start offset.
     """
     import cftime
     for prev, cur in zip(snaps[:-1], snaps[1:]):
@@ -1315,17 +1484,50 @@ def _check_order(report, snaps):
         c_first, c_last, c_start, c_end = cur["extent"]
         tol = S.TIME_EQUAL_TOL_SECONDS
         if p_end is not None and c_start is not None:
-            overlap = (dt(p_end) - dt(c_start)).total_seconds() > tol
-            what = "records of {0} end at {1} but {2} starts at {3}".format(
-                prev["path"], dt(p_end), cur["path"], dt(c_start))
+            # Continuity: first bound = previous file's last bound.
+            gap = (dt(c_start) - dt(p_end)).total_seconds()
+            if abs(gap) > tol:
+                kind = ("a gap of {0:.10g} s ({1:.6g} days)".format(gap, gap / 86400.0)
+                        if gap > 0 else
+                        "an overlap of {0:.10g} s ({1:.6g} days); the files are not "
+                        "in time order or overlap (list files in time order)".format(
+                            -gap, -gap / 86400.0))
+                report._add("X01", "{0}: time_bnds start at {1}, but {2} ends at {3}: "
+                            "{4}. Each file's first bound must equal the previous "
+                            "file's last bound".format(
+                                cur["path"], dt(c_start), prev["path"], dt(p_end), kind),
+                            cur["path"], "time_bnds")
         else:
-            overlap = (dt(p_last) - dt(c_first)).total_seconds() >= -tol
-            what = "last time of {0} is {1} but first time of {2} is {3}".format(
-                prev["path"], dt(p_last), cur["path"], dt(c_first))
-        if overlap:
-            report._add("X01", "{0}: files are not in time order or overlap: {1} "
-                        "(list files in time order)".format(cur["path"], what),
-                        cur["path"], "time")
+            lacking = [s["path"] for s, e in ((prev, p_end), (cur, c_start)) if e is None]
+            report._add("X01", "{0}: continuity with {1} can't be checked because {2} "
+                        "has no valid time_bnds; every file of a multi-file set needs "
+                        "time_bnds".format(cur["path"], prev["path"],
+                                           " and ".join(lacking)),
+                        cur["path"], "time_bnds")
+            if (dt(p_last) - dt(c_first)).total_seconds() >= -tol:
+                report._add("X01", "{0}: files are not in time order or overlap: last "
+                            "time of {1} is {2} but first time of {3} is {4} (list "
+                            "files in time order)".format(
+                                cur["path"], prev["path"], dt(p_last), cur["path"],
+                                dt(c_first)), cur["path"], "time")
+    _check_yearly_offsets(report, snaps)
+
+
+def _check_yearly_offsets(report, snaps):
+    """X01: ``_YYYY`` files share one start offset from 1 January of their year."""
+    yearly = [s for s in snaps if s["year"] is not None and s["offset"] is not None]
+    if len(yearly) < 2:
+        return
+    ref = yearly[0]
+    for cur in yearly[1:]:
+        if abs(cur["offset"] - ref["offset"]) > S.TIME_EQUAL_TOL_SECONDS:
+            report._add("X01", "{0}: first record starts {1:.10g} s ({2:.6g} days) after "
+                        "1 January {3}, but {4} starts {5:.10g} s ({6:.6g} days) after "
+                        "1 January {7}; yearly files must share one start offset".format(
+                            cur["path"], cur["offset"], cur["offset"] / 86400.0,
+                            cur["year"], ref["path"], ref["offset"],
+                            ref["offset"] / 86400.0, ref["year"]),
+                        cur["path"], "time_bnds")
 
 
 # ---------------------------------------------------------------------------
@@ -1369,10 +1571,11 @@ def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES):
         except OSError as e:
             raise CheckIOError("cannot open {0} as NetCDF: {1}".format(path, e))
         try:
-            ds.set_auto_mask(False)
+            ds.set_auto_maskandscale(False)   # stored values: no masking, no unpacking
             ds.set_auto_chartostring(False)
             ctx = _FileContext(path, ds, report)
             _check_structure(ctx)
+            _check_attr_types(ctx)
             _check_sources(ctx)
             _check_aliases(ctx)
             _check_targets(ctx)
