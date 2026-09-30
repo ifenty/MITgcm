@@ -98,12 +98,26 @@ MODEL_READ_VARIABLES = ("time", "time_bnds", "source_id", "target_source",
 MODEL_READ_PREFIXES = ("runoff_",)
 PACKING_ATTRS = ("scale_factor", "add_offset")
 
-#: S08: model-read text attributes must be NC_CHAR, not NC_STRING (section 1):
-#: every ``mitgcm_*`` global text attribute, these attributes of ``time`` and
-#: ``time_bnds``, and ``units`` of every ``runoff_*`` variable.
+#: S08: text attributes the model reads are ASCII NC_CHAR, not NC_STRING
+#: (section 1): these global attributes, these attributes of ``time`` and
+#: ``time_bnds``, and ``units`` of every ``runoff_*`` variable. Descriptive
+#: ``mitgcm_*`` attributes the model doesn't read (``mitgcm_grid_name``,
+#: ``mitgcm_grid_description``) may be any type and any UTF-8 text.
+MODEL_READ_GLOBAL_TEXT_ATTRS = ("mitgcm_runoff_schema_version", "mitgcm_time_sampling",
+                                "mitgcm_time_repeat")
 MODEL_READ_TIME_ATTRS = ("units", "calendar")
 NC_CHAR = 2      # netCDF external type codes (netcdf.h)
 NC_STRING = 12
+
+#: S09: on a numeric model-read variable these are numbers of the variable's
+#: own type (section 1); the reader reads them with ``NF_GET_ATT_DOUBLE``.
+MISSING_VALUE_ATTRS = ("_FillValue", "missing_value")
+
+#: P02: keys of ``netCDF4.Variable.filters()`` allowed on model-read variables
+#: (section 8): deflate (``zlib``, with its ``complevel`` parameter), ``shuffle``
+#: and ``fletcher32``. Any other filter that is set (zstd, bzip2, szip, blosc)
+#: is an error, because the model's netCDF build may lack its plugin.
+ALLOWED_FILTER_KEYS = ("zlib", "complevel", "shuffle", "fletcher32")
 
 #: Index variables carry no ``units`` attribute (section 6.2).
 INDEX_VARIABLES = ("target_source", "target_cell", "target_level", "alias_source")
@@ -195,8 +209,10 @@ TEMPERATURE_RANGE = (-2.5, 40.0)
 SALINITY_MAX = 45.0
 #: The single time-equality tolerance (section 7): contiguous bounds (M04),
 #: fixed spacing, month/year edges, midpoints and annual coverage (M05),
-#: yearly-file limits (M06), file-to-file continuity and yearly start offsets
-#: (X01). It absorbs only floating-point representation error.
+#: yearly-file limits (M06), file-to-file continuity, fixed spacing across
+#: files and yearly start offsets (X01). It absorbs only floating-point
+#: representation error; a bound within it of a month or year edge counts as
+#: that edge.
 TIME_EQUAL_TOL_SECONDS = 1e-3
 
 # ---------------------------------------------------------------------------
@@ -218,7 +234,7 @@ RECOMMENDED_GLOBAL_ATTRS = (
 #: Rule id -> level, for every rule of schema section 9.
 RULES = {
     "S01": "E", "S02": "E", "S03": "E", "S04": "E", "S05": "E", "S06": "I",
-    "S07": "E", "S08": "E",
+    "S07": "E", "S08": "E", "S09": "E",
     "G01": "E",
     "I01": "E", "I02": "E", "I03": "W", "I04": "W",
     "A01": "E", "A02": "W",
@@ -227,6 +243,6 @@ RULES = {
     "M01": "E", "M02": "W", "M03": "E", "M04": "E", "M05": "E", "M06": "E",
     "D01": "E", "D02": "E", "D03": "W", "D04": "W", "D05": "E", "D06": "W",
     "D07": "E", "D08": "W", "D09": "E",
-    "U01": "E", "P01": "W", "X01": "E",
+    "U01": "E", "P01": "W", "P02": "E", "X01": "E",
     "R01": "E", "R02": "E", "R03": "W",
 }

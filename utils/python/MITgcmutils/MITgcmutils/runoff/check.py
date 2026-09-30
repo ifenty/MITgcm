@@ -33,12 +33,27 @@ Implementation notes that the schema leaves to the checker:
   missing when it is NaN, equals the variable's ``_FillValue`` (or, without
   that attribute, the netCDF default fill of the variable's type, which is
   what unwritten records read as), or equals a ``missing_value``.
-* S08 needs the stored type of an attribute (NC_CHAR or NC_STRING), which
-  netCDF4-python does not expose. It is read with ``nc_inq_atttype`` from the
-  libnetcdf that netCDF4 loaded, through :mod:`ctypes`, on a second read-only
-  open of the file. If that library can't be loaded, the attribute types are
+* S08 covers only the text attributes the model reads (section 1:
+  :data:`schema.MODEL_READ_GLOBAL_TEXT_ATTRS`, ``units``/``calendar`` of
+  ``time`` and ``time_bnds``, ``units`` of ``runoff_*``): each must be ASCII
+  and stored as NC_CHAR. Descriptive ``mitgcm_grid_name``/
+  ``mitgcm_grid_description`` may be NC_STRING and UTF-8. The stored type,
+  which netCDF4-python does not expose, is read with ``nc_inq_atttype`` from
+  the libnetcdf that netCDF4 loaded, through :mod:`ctypes`, on a second
+  read-only open of the file. If that library can't be loaded, the types are
   not checked and S08 is reported as a W finding instead (exit status 1 only
-  with ``--strict``).
+  with ``--strict``); the ASCII check still runs.
+* S09: ``_FillValue``/``missing_value`` on a numeric model-read variable must
+  be a number of the variable's own type. Text values are never used as fill
+  values by the other rules. ``source_id`` is text, so it is not checked.
+* P02 reads ``netCDF4.Variable.filters()``; only deflate (``zlib``), shuffle
+  and fletcher32 are allowed on model-read variables. Filters that
+  ``filters()`` doesn't report (unknown plugins) are not detected. If a time
+  series with a disallowed filter can't be read here, that is reported under
+  P02 instead of stopping the check.
+* A month or year edge is recognized within the time tolerance: a bound up to
+  :data:`schema.TIME_EQUAL_TOL_SECONDS` before an edge counts as that edge
+  (M05).
 * Variable-length strings: an unwritten element reads as ``""``, the NC_STRING
   default fill, so an empty string counts as missing. Char arrays are decoded
   after removing trailing NUL padding; ``source_id`` also has trailing blanks
@@ -56,8 +71,11 @@ Implementation notes that the schema leaves to the checker:
   and a ``_FillValue``/``missing_value`` of ±Inf, is an error (D09).
 * X01 continuity: each file's first ``time_bnds`` start must equal the previous
   file's last end, so every file of a multi-file set needs ``time_bnds``.
-  ``_YYYY`` files must also share one start offset from 1 January of the
-  year in their name.
+  With ``fixed`` sampling the spacing across a file boundary must equal
+  ``mitgcm_time_period``. ``_YYYY`` files must also share one offset of their
+  first ``time`` value from 1 January of the year in their name.
+* R03 compares unpacked ``target_lon``/``target_lat``, which may be packed
+  because the model doesn't read them.
 * U01 requires the units listed in :data:`schema.TABLE_UNITS` on those schema
   variables when present, and forbids units on index variables; user-added
   ``*_lon``/``*_lat`` variables are not checked.
@@ -202,6 +220,44 @@ def _scalar(value):
     return a.reshape(()).item(), a.dtype.kind
 
 
+def _numeric_values(value):
+    """The numbers of a numeric attribute value, or ``[]`` for text (S09)."""
+    if value is None or isinstance(value, (str, bytes)):
+        return []
+    a = np.asarray(value)
+    if a.dtype.kind not in "fiu":
+        return []
+    return np.ravel(a).tolist()
+
+
+def _is_ascii(value):
+    """False when a text attribute value has a non-ASCII character (S08)."""
+    if isinstance(value, str):
+        return value.isascii()
+    if isinstance(value, bytes):
+        return all(c < 128 for c in value)
+    if isinstance(value, (list, tuple, np.ndarray)) and np.asarray(value).dtype.kind in "OUS":
+        return all(_is_ascii(v) for v in np.ravel(np.asarray(value, dtype=object)))
+    return True
+
+
+def _unpacked(var):
+    """float64 values of ``var`` unpacked as CF does (``packed * scale_factor +
+    add_offset``), with fill and missing values as NaN. Used for variables the
+    model doesn't read, which may be packed (R03)."""
+    raw = np.asarray(var[:])
+    a = raw.astype(np.float64)
+    if raw.dtype.kind in "fiu":
+        a[_fill_mask(raw, _fill_values(var))] = np.nan
+    sf, _ = _scalar(_attr(var, "scale_factor"))
+    ao, _ = _scalar(_attr(var, "add_offset"))
+    if sf is not None:
+        a = a * float(sf)
+    if ao is not None:
+        a = a + float(ao)
+    return a
+
+
 def _type_class(var):
     """``float``, ``int``, ``char``, ``vstring`` or ``other``."""
     dt = var.dtype
@@ -250,14 +306,15 @@ def _fill_values(var):
         return []
     names = var.ncattrs()
     vals = []
+    # Text values are not numbers the reader could match; S09 reports them.
     if "_FillValue" in names:
-        vals.extend(np.ravel(var.getncattr("_FillValue")).tolist())
+        vals.extend(_numeric_values(var.getncattr("_FillValue")))
     else:
         key = dt.str[1:]
         if key in netCDF4.default_fillvals:
             vals.append(netCDF4.default_fillvals[key])
     if "missing_value" in names:
-        vals.extend(np.ravel(var.getncattr("missing_value")).tolist())
+        vals.extend(_numeric_values(var.getncattr("missing_value")))
     return vals
 
 
@@ -374,9 +431,15 @@ def _attr_types(path, queries):
 
 
 def _check_attr_types(ctx):
-    """S08: model-read text attributes are NC_CHAR, not NC_STRING."""
+    """S08: text attributes the model reads (section 1) are ASCII NC_CHAR.
+
+    Only :data:`schema.MODEL_READ_GLOBAL_TEXT_ATTRS`, ``units``/``calendar`` of
+    ``time`` and ``time_bnds`` and ``units`` of ``runoff_*`` variables are
+    checked; descriptive ``mitgcm_grid_*`` text may be NC_STRING and UTF-8.
+    The ASCII check needs no libnetcdf; the NC_STRING check does.
+    """
     ds = ctx.ds
-    queries = [(None, a) for a in ds.ncattrs() if a.startswith(S.RESERVED_ATTR_PREFIX)]
+    queries = [(None, a) for a in S.MODEL_READ_GLOBAL_TEXT_ATTRS if a in ds.ncattrs()]
     for name in ("time", "time_bnds"):
         if name in ds.variables:
             queries += [(name, a) for a in S.MODEL_READ_TIME_ATTRS
@@ -384,6 +447,12 @@ def _check_attr_types(ctx):
     for name, var in ds.variables.items():
         if name.startswith("runoff_") and "units" in var.ncattrs():
             queries.append((name, "units"))
+    for var, att in queries:
+        value = (ds if var is None else ds.variables[var]).getncattr(att)
+        if not _is_ascii(value):
+            what = "global attribute" if var is None else "attribute"
+            ctx.add("S08", "{0} '{1}' = {2!r} is not ASCII; the model reads it as "
+                    "ASCII text (NF_GET_ATT_TEXT)".format(what, att, value), var)
     types = _attr_types(ctx.path, queries)
     if types is None:
         ctx.add("S08", "attribute types not checked: libnetcdf could not be loaded "
@@ -470,6 +539,7 @@ class _FileContext:
         self.bounds = None       # float64 (n, 2) time_bnds when readable
         self.bounds_ok = None    # per-record: bounds finite and not fill
         self.targets = None      # dict of target arrays when readable
+        self.bad_filters = {}    # variable -> disallowed HDF5 filters (P02)
 
     # -- collection -------------------------------------------------------
 
@@ -661,6 +731,44 @@ def _check_structure(ctx):
                         "{0} = {1}".format(a, np.asarray(var.getncattr(a)).tolist())
                         for a in packing)),
                     name)
+
+    # S09: missing-value attributes of numeric model-read variables are numbers
+    # of the variable's own type (the reader uses NF_GET_ATT_DOUBLE). source_id
+    # is text, so its fill is text by definition and not checked here.
+    for name, var in ds.variables.items():
+        if not _model_read(name) or _type_class(var) not in ("int", "float"):
+            continue
+        vdt = np.dtype(var.dtype)
+        for att in S.MISSING_VALUE_ATTRS:
+            if att not in var.ncattrs():
+                continue
+            val = var.getncattr(att)
+            if isinstance(val, (str, bytes)):
+                kind = "text"
+            else:
+                adt = np.asarray(val).dtype
+                if adt.kind in "fiu" and adt == vdt:
+                    continue
+                kind = "type {0}".format(adt)
+            ctx.add("S09", "{0} = {1!r} is {2}; on a model-read variable it must be a "
+                    "number of the variable's own type ({3}), because the model reads "
+                    "it with NF_GET_ATT_DOUBLE".format(att, val, kind, vdt), name)
+
+    # P02: only deflate, shuffle and fletcher32 on model-read variables
+    ctx.bad_filters = {}
+    for name, var in ds.variables.items():
+        if not _model_read(name):
+            continue
+        try:
+            filters = var.filters() or {}
+        except Exception:  # noqa: BLE001 - no filter information (e.g. NETCDF3)
+            continue
+        bad = sorted(k for k, v in filters.items() if v and k not in S.ALLOWED_FILTER_KEYS)
+        if bad:
+            ctx.bad_filters[name] = bad
+            ctx.add("P02", "uses HDF5 filter(s) {0}; model-read variables may use only "
+                    "deflate (zlib), shuffle and fletcher32, because the model's netCDF "
+                    "build may lack other filter plugins".format(", ".join(bad)), name)
 
     # G01
     dims = {}
@@ -1032,7 +1140,11 @@ def _check_sampling(ctx):
             if not bok[r]:
                 prev = None
                 continue
-            d0 = tax.num2date(b[r, 0])
+            # Which month/year the record belongs to: decode the start moved
+            # forward by the tolerance, so a start up to the tolerance before
+            # an edge (e.g. 86 us early) counts as that edge, not as the last
+            # instant of the previous month.
+            d0 = tax.num2date(b[r, 0] + tax.tol)
             if samp == "monthly":
                 key = (d0.year, d0.month)
                 nxt = (d0.year + d0.month // 12, d0.month % 12 + 1)
@@ -1090,6 +1202,13 @@ def _check_sampling(ctx):
                 ctx.add("M05", "mitgcm_time_repeat is 'annual' but the records cover "
                         "{0} to {1}, not exactly one year (expected end {2})".format(
                             tax.label(b[0, 0]), tax.label(b[-1, 1]), d1), "time_bnds")
+            # exf monthly records (period -12) run January to December.
+            first = tax.num2date(b[0, 0] + tax.tol)
+            if samp == "monthly" and first.month != 1:
+                ctx.add("M05", "a monthly annual climatology must start in January "
+                        "(exf monthly records run January to December), but the first "
+                        "record starts {0}".format(tax.label(b[0, 0])), "time_bnds",
+                        record=0, time=ctx.tval(0))
 
 
 def _check_yearly_name(ctx):
@@ -1151,13 +1270,12 @@ def _check_timeseries(ctx, max_block_bytes):
         elif su is None or su.strip() not in S.UNITS[name]:
             ctx.add("D01", "units {0!r} are not allowed; allowed: {1}".format(
                 units, ", ".join(S.UNITS[name])), name)
-        # D09: an infinite missing-value marker on the temperature
+        # D09: an infinite missing-value marker on the temperature (text: S09)
         if name == S.TEMPERATURE_VAR:
-            for att in ("_FillValue", "missing_value"):
+            for att in S.MISSING_VALUE_ATTRS:
                 if att not in var.ncattrs():
                     continue
-                with np.errstate(invalid="ignore"):
-                    vals = np.ravel(np.asarray(var.getncattr(att), dtype=np.float64))
+                vals = np.asarray(_numeric_values(var.getncattr(att)), dtype=np.float64)
                 if np.isinf(vals).any():
                     ctx.add("D09", "{0} = {1} is infinite; Inf is never a missing-value "
                             "marker (use a finite fill value or NaN)".format(
@@ -1171,7 +1289,14 @@ def _check_timeseries(ctx, max_block_bytes):
             ctx.add("P01", "chunk shape {0} spans {1} records along time; reading "
                     "one record decompresses several (use 1)".format(
                         tuple(chunks), chunks[0]), name)
-        if form_ok:
+        if form_ok and name in ctx.bad_filters:
+            # The checker's own netCDF may lack the plugin too: report, don't crash.
+            try:
+                _stream_values(ctx, name, var, max_block_bytes)
+            except (RuntimeError, OSError) as e:
+                ctx.add("P02", "values could not be read with this netCDF library "
+                        "({0}), so D rules were not checked".format(e), name)
+        elif form_ok:
             _stream_values(ctx, name, var, max_block_bytes)
 
 
@@ -1293,7 +1418,11 @@ def _read_grid_field(grid_dir, name):
 
 
 def _check_grid(ctx, grid):
-    """R01-R03, and G01 when the grid's shape doesn't match (nx, ny)."""
+    """R01-R03, and G01 when the grid's shape doesn't match (nx, ny).
+
+    ``target_lon``/``target_lat`` are not model-read and may be packed; R03
+    compares their unpacked values (``scale_factor``/``add_offset`` applied).
+    """
     if ctx.nx is None or ctx.targets is None:
         return
     nx, ny = ctx.nx, ctx.ny
@@ -1336,7 +1465,8 @@ def _check_grid(ctx, grid):
         g = field2d(gname)
         if g is None:
             continue
-        v = np.asarray(ctx.ds.variables[vname][:]).astype(np.float64)
+        # Not model-read, so it may be packed: compare unpacked degrees.
+        v = _unpacked(ctx.ds.variables[vname])
         with np.errstate(invalid="ignore"):
             d = v[rows] - g[cells[rows]]
             if vname == "target_lon":
@@ -1385,21 +1515,32 @@ def _snapshot(ctx):
         if ctx.bounds is not None and ctx.bounds_ok.all():
             start, end = fields(ctx.bounds[0, 0]), fields(ctx.bounds[-1, 1])
         extent = (first_t, last_t, start, end)
-    # Yearly files: start offset of the first bound from 1 January of the
-    # year in the file name, in seconds, in the file's own calendar.
+    # Yearly files: offset of the first *time value* from 1 January of the
+    # year in the file name, in seconds, in the file's own calendar. exf
+    # (useExfYearlyFields) uses one fldStartTime, the first record's time
+    # offset, for every year (section 7).
     year = offset = None
     m = S.YEARLY_FILE_RE.search(os.path.basename(ctx.path))
     if m is not None:
         year = int(m.group(1))
-        if extent is not None and extent[2] is not None:
+        if extent is not None:
             try:
                 jan1 = ctx.tax.date2num(ctx.tax.datetime(year, 1, 1))
-                offset = (ctx.bounds[0, 0] - jan1) * ctx.tax.factor
+                offset = (ctx.time_values[0] - jan1) * ctx.tax.factor
             except ValueError:
                 offset = None
+    # Fixed sampling: the period, for the spacing across file boundaries.
+    attrs = ds.ncattrs()
+    sampling = (_str_attr(ds.getncattr("mitgcm_time_sampling"))
+                if "mitgcm_time_sampling" in attrs else None)
+    period = None
+    if "mitgcm_time_period" in attrs:
+        val, kind = _scalar(ds.getncattr("mitgcm_time_period"))
+        if kind in ("i", "u", "f") and val is not None and np.isfinite(val) and val > 0:
+            period = float(val)
     return {"path": ctx.path, "vars": set(ds.variables), "static": static,
             "grid": grid, "calendar": ctx.calendar, "extent": extent,
-            "year": year, "offset": offset}
+            "year": year, "offset": offset, "sampling": sampling, "period": period}
 
 
 def _same(a, b):
@@ -1460,8 +1601,11 @@ def _check_order(report, snaps):
     ``gregorian`` = ``proleptic_gregorian``; ``noleap`` = ``365_day``). Each
     file's first ``time_bnds`` start must equal the previous file's last end;
     without bounds, continuity can't be shown, which is itself an X01 error.
-    Dates are compared in the later file's calendar, with the section-7 time
-    tolerance. ``_YYYY`` files are then checked for a common start offset.
+    With ``fixed`` sampling in both files, the first time of a file minus the
+    last time of the previous one must equal ``mitgcm_time_period``. Dates are
+    compared in the later file's calendar, with the section-7 time tolerance.
+    ``_YYYY`` files are then checked for a common offset of their first time
+    value from 1 January.
     """
     import cftime
     for prev, cur in zip(snaps[:-1], snaps[1:]):
@@ -1483,10 +1627,12 @@ def _check_order(report, snaps):
         p_first, p_last, p_start, p_end = prev["extent"]
         c_first, c_last, c_start, c_end = cur["extent"]
         tol = S.TIME_EQUAL_TOL_SECONDS
+        broken = False       # a gap or overlap was already reported for this pair
         if p_end is not None and c_start is not None:
             # Continuity: first bound = previous file's last bound.
             gap = (dt(c_start) - dt(p_end)).total_seconds()
-            if abs(gap) > tol:
+            broken = abs(gap) > tol
+            if broken:
                 kind = ("a gap of {0:.10g} s ({1:.6g} days)".format(gap, gap / 86400.0)
                         if gap > 0 else
                         "an overlap of {0:.10g} s ({1:.6g} days); the files are not "
@@ -1504,30 +1650,52 @@ def _check_order(report, snaps):
                         "time_bnds".format(cur["path"], prev["path"],
                                            " and ".join(lacking)),
                         cur["path"], "time_bnds")
-            if (dt(p_last) - dt(c_first)).total_seconds() >= -tol:
+            broken = (dt(p_last) - dt(c_first)).total_seconds() >= -tol
+            if broken:
                 report._add("X01", "{0}: files are not in time order or overlap: last "
                             "time of {1} is {2} but first time of {3} is {4} (list "
                             "files in time order)".format(
                                 cur["path"], prev["path"], dt(p_last), cur["path"],
                                 dt(c_first)), cur["path"], "time")
+        # Fixed sampling: the spacing across the file boundary is the period too
+        # (not repeated when a gap or overlap was already reported for the pair).
+        if not broken and prev["sampling"] == cur["sampling"] == "fixed" \
+                and prev["period"] is not None and cur["period"] is not None:
+            if abs(prev["period"] - cur["period"]) > tol:
+                report._add("X01", "{0}: mitgcm_time_period = {1:.10g} s differs from "
+                            "{2} ({3:.10g} s)".format(cur["path"], cur["period"],
+                                                     prev["path"], prev["period"]),
+                            cur["path"], "time")
+            else:
+                spacing = (dt(c_first) - dt(p_last)).total_seconds()
+                if abs(spacing - cur["period"]) > tol:
+                    report._add("X01", "{0}: first time {1} is {2:.10g} s after the last "
+                                "time of {3} ({4}), not mitgcm_time_period = {5:.10g} s; "
+                                "with fixed sampling the spacing across files must equal "
+                                "the period".format(cur["path"], dt(c_first), spacing,
+                                                    prev["path"], dt(p_last),
+                                                    cur["period"]),
+                                cur["path"], "time")
     _check_yearly_offsets(report, snaps)
 
 
 def _check_yearly_offsets(report, snaps):
-    """X01: ``_YYYY`` files share one start offset from 1 January of their year."""
+    """X01: ``_YYYY`` files share one offset of their first ``time`` value from
+    1 January of the year in their name (exf's single ``fldStartTime``)."""
     yearly = [s for s in snaps if s["year"] is not None and s["offset"] is not None]
     if len(yearly) < 2:
         return
     ref = yearly[0]
     for cur in yearly[1:]:
         if abs(cur["offset"] - ref["offset"]) > S.TIME_EQUAL_TOL_SECONDS:
-            report._add("X01", "{0}: first record starts {1:.10g} s ({2:.6g} days) after "
-                        "1 January {3}, but {4} starts {5:.10g} s ({6:.6g} days) after "
-                        "1 January {7}; yearly files must share one start offset".format(
+            report._add("X01", "{0}: first time is {1:.10g} s ({2:.6g} days) after "
+                        "1 January {3}, but the first time of {4} is {5:.10g} s ({6:.6g} "
+                        "days) after 1 January {7}; yearly files must share one start "
+                        "offset (exf uses one fldStartTime for every year)".format(
                             cur["path"], cur["offset"], cur["offset"] / 86400.0,
                             cur["year"], ref["path"], ref["offset"],
                             ref["offset"] / 86400.0, ref["year"]),
-                        cur["path"], "time_bnds")
+                        cur["path"], "time")
 
 
 # ---------------------------------------------------------------------------

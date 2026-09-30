@@ -93,6 +93,7 @@ def _default_spec():
         "var_attrs": {},           # variable -> {attr: value or None (delete)}
         "global_attrs": {},        # attr -> value or None (delete)
         "extra_vars": {},          # name -> (dims, values, attrs)
+        "var_create": {},          # variable -> extra createVariable keywords
     }
 
 
@@ -166,6 +167,9 @@ def write_example(path, **overrides):
     Dictionaries ``dtypes``, ``fill_values``, ``var_attrs`` and
     ``global_attrs`` are merged into the defaults (a ``None`` value deletes an
     attribute), and ``extra_vars`` adds ``{name: (dims, values, attrs)}``.
+    ``var_create`` passes extra ``netCDF4.Dataset.createVariable`` keywords per
+    variable, e.g. ``{"runoff_flux": {"compression": "zstd"}}`` (an explicit
+    ``compression`` replaces the default zlib).
     """
     import netCDF4
     import cftime
@@ -318,6 +322,10 @@ def write_example(path, **overrides):
                 kw.update(chunksizes=(max(1, spec["chunk_time"]), max(1, ns)))
                 if spec["zlib"]:
                     kw.update(zlib=True, complevel=2, shuffle=True)
+            extra = spec["var_create"].get(name, {})
+            if "compression" in extra:
+                kw.pop("zlib", None)       # an explicit compression replaces zlib
+            kw.update(extra)
             v = ds.createVariable(name, dtype, dims, **kw)
             for k, a in attrs_for(name, attrs).items():
                 if a is not None:
