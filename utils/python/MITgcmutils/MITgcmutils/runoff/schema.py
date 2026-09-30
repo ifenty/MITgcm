@@ -210,7 +210,8 @@ SALINITY_MAX = 45.0
 #: The single time-equality tolerance (section 7): contiguous bounds (M04),
 #: fixed spacing, month/year edges, midpoints and annual coverage (M05),
 #: yearly-file limits (M06), file-to-file continuity, fixed spacing across
-#: files and yearly start offsets (X01). It absorbs only floating-point
+#: files and the common offset of each yearly file's first time value (X01).
+#: It absorbs only floating-point
 #: representation error; a bound within it of a month or year edge counts as
 #: that edge.
 TIME_EQUAL_TOL_SECONDS = 1e-3

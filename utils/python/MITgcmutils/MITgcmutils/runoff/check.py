@@ -632,7 +632,16 @@ class _FileContext:
 
 
 def _check_structure(ctx):
-    """S01-S06 and G01."""
+    """S01-S07, S09, P02 and G01: file-level structure.
+
+    Format (S01), schema version (S02), dimensions (S03), static-table
+    variables (S04), undefined reserved names (S05), recommended global
+    attributes (S06), no packing of model-read variables (S07), numeric
+    missing-value attributes of their own type on model-read variables (S09),
+    allowed HDF5 filters on model-read variables (P02) and the grid size
+    attributes (G01). Also records ``ctx.bad_filters`` for the P02 read guard
+    in :func:`_check_timeseries`.
+    """
     ds = ctx.ds
     # S01
     if ds.data_model not in S.NETCDF_FORMATS:
@@ -972,7 +981,12 @@ def _check_targets(ctx):
 
 
 def _check_time(ctx):
-    """M01-M06."""
+    """M01-M04 on ``time`` and ``time_bnds``, then the sampling and file-name checks.
+
+    Units and calendar (M01, M02 warning), finite strictly increasing times
+    (M03) and bounds (M04) are checked here; it then calls
+    :func:`_check_sampling` (M05) and :func:`_check_yearly_name` (M06).
+    """
     ds = ctx.ds
     if not ctx.ok.get("time"):
         return
@@ -1238,7 +1252,14 @@ def _check_yearly_name(ctx):
 
 
 def _check_timeseries(ctx, max_block_bytes):
-    """D01-D08 and P01, streaming records in bounded blocks."""
+    """D01, D07, D09, P01 and P02 on each time series, then its values.
+
+    Form and units (D01), ptracer name and units (D07), an Inf
+    ``_FillValue``/``missing_value`` on the temperature (D09), chunking (P01)
+    and, for a variable with a disallowed filter, values that this netCDF
+    library can't read (P02). The values are then streamed in bounded blocks
+    by :func:`_stream_values` (D02-D09).
+    """
     ds = ctx.ds
     names = [n for n in ds.variables
              if n in S.TIMESERIES_VARIABLES or n.startswith(S.PTRACER_PREFIX)]
@@ -1301,6 +1322,13 @@ def _check_timeseries(ctx, max_block_bytes):
 
 
 def _stream_values(ctx, name, var, max_block_bytes):
+    """D02-D09 on the values of one time series, read in blocks of whole records.
+
+    Flux: missing or non-finite (D02), negative (D03). Temperature: ±Inf
+    (D09), outside the warning range (D04). Salinity: missing or negative
+    (D05), above the warning threshold (D06). Ptracer: missing (D07), negative
+    (D08). Blocks hold at most ``max_block_bytes``.
+    """
     nt, ns = var.shape
     if nt == 0 or ns == 0:
         return
@@ -1357,7 +1385,8 @@ def _stream_values(ctx, name, var, max_block_bytes):
 def _check_units(ctx):
     """U01: units of the schema table variables in :data:`schema.TABLE_UNITS`
     (required when the variable is present) and of index variables (forbidden).
-    Time units are M01; time series units D01/D07; user variables unchecked."""
+    Time units are checked by :func:`_check_time` and time-series units by
+    :func:`_check_timeseries`; user variables are not checked."""
     for name, var in ctx.ds.variables.items():
         units = _attr(var, "units")
         su = None if units is None else _str_attr(units)
