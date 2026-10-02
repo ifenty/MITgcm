@@ -82,13 +82,15 @@ Implementation notes
 
   - ``latlon``, for a single regular lat-lon block: neighbours are
     ``(i+-1, j)`` and ``(i, j+-1)``, plus the zonal wrap between ``i = nx-1``
-    and ``i = 0``. The wrap is decided row by row, from the rows whose first
-    and last cells are both valid: such a row closes when the east edge of
-    its last cell, ``2 XC - XG``, is 360 degrees east of ``XG`` of its first
-    cell (within :data:`LATLON_EDGE_TOL` of the cell width), and exactly
-    those rows get the wrap link. A blank tile at an end column removes the
-    wrap only in its own rows. The declaration is checked
-    (:func:`_latlon_problem`): over the valid cells (``RAC > 0``) ``XC`` and
+    and ``i = 0``. The block closes in longitude when its first and last
+    columns both hold valid cells and the span from ``XG`` of the first to
+    the east edge ``2 XC - XG`` of the last is 360 degrees (within
+    :data:`LATLON_EDGE_TOL` of the cell width). The span is the unwrapped
+    one of the check below, so longitudes stored in [0, 360), which drop by
+    360 inside the array, close too. Then every row whose two end cells are
+    wet gets the wrap link; a blank tile at an end column removes the wrap
+    only in its own rows. The declaration is checked
+    (:func:`_latlon_check`): over the valid cells (``RAC > 0``) ``XC`` and
     ``XG`` must depend only on ``i`` and ``YC`` and ``YG`` only on ``j``
     (within :data:`LATLON_TOL` degrees). Over all columns that hold a valid
     cell ``XG`` must be one increasing function of ``i``, and ``YG`` of
@@ -149,14 +151,34 @@ Implementation notes
   stops on corners it cannot match consistently (an edge shared by more
   than two cells, or a cell with more than four neighbours). ``exch2``
   also stops, naming the cell and pointing to ``latlon``, when a wet cell
-  has a zero-length edge (:func:`_degenerate_edge`): its SW corner is also
-  the SW corner of an array neighbour, two of its corners are the same
-  vertex, or the edge opposite its SW corner collapses onto a geographic
-  pole. That is the case of a wet row of a lat-lon grid touching a pole,
-  whose links the corner method would lose; so a lat-lon run that uses
-  pkg/exch2 (and has ``data.exch2``) should declare ``latlon``. A collapsed
-  edge that is not at a geographic pole (the pole of a rotated grid) is
-  seen only on a cell's south or west side. ``exch2`` declared on a
+  is a triangle: two of its four corners coincide. That is the case of a
+  wet row of a lat-lon grid touching a pole, whose links the corner method
+  would lose; so a lat-lon run that uses pkg/exch2 (and has ``data.exch2``)
+  should declare ``latlon``. The test uses the cell's geometry only, never
+  its coordinates, so it is the same wherever the grid is rotated
+  (:func:`_triangle_cell`). It is made among the cells whose corners are
+  searched for geometrically:
+
+  - two resolved corners closer than :data:`COLLAPSE_TOL` times
+    ``sqrt(RAC)``;
+  - apex beyond the center: no vertex is the cell's SE or NW corner or lies
+    at its predicted NE corner, and for a neighbouring corner v the cell
+    area is that of a triangle, ``RAC = |(v - SW) x (C - SW)|`` (half that
+    for a quadrilateral, :data:`TRIANGLE_RANGE`), with the implied apex
+    equally far from SW and v and from the centers of this cell and of the
+    cell owning v;
+  - apex at the SW corner: no vertex lies at the predicted NE corner, and
+    two vertices equally far from the SW corner, centred on that
+    prediction, form with it a triangle of the cell area
+    (:data:`APEX_TRIANGLE_RANGE`).
+
+  A cell with four distinct corners meets none of these on the grids
+  tested (below), including cells with a corner or their center exactly at
+  a geographic pole. Not covered: a triangle with no valid cell
+  (``RAC > 0``) beside it to supply the neighbouring corners the tests use
+  (a lone polar cell between blank tiles); a triangle with its apex beyond
+  the center when that apex is itself some cell's SW corner; and polar
+  cells wider than about 45 degrees of longitude. ``exch2`` declared on a
   lat-lon grid whose wet cells do not touch a pole gives the same
   neighbours as ``latlon`` on the grids tested (below).
 
@@ -181,7 +203,14 @@ Implementation notes
   tiles (also with blank columns and rows between their valid parts),
   ``exch2`` finds the facet seam links and ``latlon`` is refused. On
   pole-to-pole and 60N-90N lat-lon grids with a wet polar row ``latlon`` is
-  exact and ``exch2`` is refused; with the polar rows dry both agree. On
+  exact and ``exch2`` is refused (polar caps with cells from 1 to 45 degrees
+  wide, at either pole, and the 60N-90N block rotated by 40 degrees); with
+  the polar rows dry both agree. cs32 rotated so that a cell vertex, or a
+  cell center, lies exactly at a geographic pole (8 rotations), and an
+  equiangular cube of 128 x 128 faces with poles at vertices, also with
+  ``XC`` perturbed by 1e-7 degrees, give the closed cube. A global grid
+  starting at 280E wraps whether ``XG`` runs to 636 or is stored in
+  [0, 360). On
   lat-lon grids (periodic with blank tiles at the end columns; open at
   55N-63N with cell aspect ratios from about 1/8 to 2) ``exch2`` gives the
   ``latlon`` neighbours, and on a lat-lon block rotated over the North Pole
@@ -262,9 +291,19 @@ LATLON_EDGE_TOL = 0.01
 #: positive, is what guarantees that cells separated by blank columns do not
 #: touch; the range allows for stretched grids.
 LATLON_GAP_RANGE = (0.25, 4.0)
-#: ``exch2``: a cell's far edge is taken to collapse onto a geographic pole
-#: when ``2 YC - YG`` is within this many degrees of +-90.
-POLE_TOL = 1e-4
+#: ``exch2``: two resolved corners of a cell closer than this times sqrt(RAC)
+#: are one point (the cell is a triangle).
+COLLAPSE_TOL = 1e-6
+#: ``exch2``, triangle with the apex beyond the center: for a neighbouring
+#: corner v, twice the triangle (SW, v, center) is half the cell area for a
+#: quadrilateral and all of it for a triangle; in the units of
+#: :data:`CORNER_AREA_RANGE` that is 1 and 2. This range is "2".
+TRIANGLE_RANGE = (1.5, 2.5)
+#: ``exch2``, triangle with the apex at the SW corner: the area of the
+#: triangle (SW, a, b) relative to RAC, for two corners a and b equally far
+#: from the SW corner and centred on its rotation about the cell center. It is
+#: 1 for a triangle; a quadrilateral's own SE and NW corners give 0.5.
+APEX_TRIANGLE_RANGE = (0.75, 1.25)
 #: SW corners whose unit vectors round to the same multiples of this (about
 #: 6 mm on the Earth) are one vertex.
 VERTEX_EPS = 1e-9
@@ -836,8 +875,22 @@ def _resolve_connectivity(connectivity, grid_dir):
 
 
 def _latlon_problem(geom):
-    """None when the valid cells (``RAC > 0``) form one regular lat-lon block,
-    else a sentence naming the first violation.
+    """None when the valid cells form one regular lat-lon block, else a sentence
+    naming the first violation (:func:`_latlon_check`)."""
+    return _latlon_check(geom)[0]
+
+
+def _latlon_check(geom):
+    """``(problem, closes)`` for a grid declared ``latlon``.
+
+    ``problem`` is None when the valid cells (``RAC > 0``) form one regular
+    lat-lon block, else a sentence naming the first violation. ``closes``
+    says whether the block closes in longitude: its first and last columns
+    both hold valid cells and the unwrapped span from ``XG`` of the first
+    column to the east edge of the last is 360 degrees (within
+    :data:`LATLON_EDGE_TOL` of a cell width). The span is unwrapped exactly as
+    in the check below, so stored longitudes that drop by 360 degrees inside
+    the array (values kept in [0, 360)) close like any others.
 
     Regular means:
 
@@ -857,7 +910,7 @@ def _latlon_problem(geom):
       ends of the array, fit within 360 degrees.
 
     Then every two valid cells that share an edge on the sphere are array
-    neighbours, or the end cells of a row that closes 360 degrees, so
+    neighbours, or the end cells of a row when the block closes, so
     :func:`_latlon_pairs` is exact. Lat-lon facets stacked in the array
     restart ``XG`` or ``YG`` and are refused, also when blank columns or rows
     separate their valid parts.
@@ -865,6 +918,7 @@ def _latlon_problem(geom):
     ny, nx = geom.ny, geom.nx
     valid = geom.valid.reshape(ny, nx)
     line = {}
+    closes = False
     for name, field, axis, what in (("XC", geom.lon, 0, "column i"), ("XG", geom.glon, 0, "column i"),
                                     ("YC", geom.lat, 1, "row j"), ("YG", geom.glat, 1, "row j")):
         a = field.reshape(ny, nx)
@@ -875,7 +929,7 @@ def _latlon_problem(geom):
         if bad.any():
             k = int(np.argmax(bad))
             return "{0} varies from {1:.9g} to {2:.9g} degrees along {3} = {4}".format(
-                name, lo[k], hi[k], what, k)
+                name, lo[k], hi[k], what, k), False
         line[name] = (np.where(some, lo, 0.0), some)      # lines with no valid cell: unused
     for cname, gname, what, zonal, n in (("XC", "XG", "column i", True, nx),
                                          ("YC", "YG", "row j", False, ny)):
@@ -884,7 +938,7 @@ def _latlon_problem(geom):
         g, width = g[idx], 2.0 * (c - g)[idx]
         if not (width > 0).all():
             return "{0} is not greater than {1} in {2} = {3}".format(
-                cname, gname, what, idx[int(np.argmin(width > 0))])
+                cname, gname, what, idx[int(np.argmin(width > 0))]), False
         missing = np.diff(idx) - 1                # blank columns (rows) between two valid ones
         gap = g[1:] - (g[:-1] + width[:-1])       # from one's far edge to the next one's near edge
         if zonal:
@@ -898,27 +952,30 @@ def _latlon_problem(geom):
             edge = "{0:.9g} degrees (2 {1} - {2})".format(g[k] + width[k], cname, gname)
             if missing[k] == 0:
                 return "{0} = {1} ends at {2}, but {0} = {3} starts at {4:.9g} ({5})".format(
-                    what, idx[k], edge, idx[k + 1], g[k + 1], gname)
+                    what, idx[k], edge, idx[k + 1], g[k + 1], gname), False
             return ("{0} = {1} ends at {2} and the next {3} with valid cells, {4}, starts at "
                     "{5:.9g} ({6}); that does not leave room for the {7} blank {3}(s) between "
                     "them, so {6} is not one increasing function of the index".format(
                         what, idx[k], edge, what.split()[0], idx[k + 1], g[k + 1], gname,
-                        missing[k]))
+                        missing[k]), False)
         if zonal and idx.size:
             span = float(np.sum(width) + np.sum(gap))          # unwrapped, first to last column
             outer = int(idx[0] + (n - 1 - idx[-1]))            # blank columns at the array ends
             room = outer * float(width.min()) * LATLON_GAP_RANGE[0]
-            if span + room > 360.0 + LATLON_EDGE_TOL * float(width.min()):
+            tol = LATLON_EDGE_TOL * float(width.min())
+            if span + room > 360.0 + tol:
                 return ("the columns with valid cells span {0:.9g} degrees of longitude, which "
                         "leaves no room for the {1} column(s) without valid cells at the ends "
                         "of the array within 360 degrees".format(span, outer) if outer else
-                        "the columns span {0:.9g} degrees of longitude, more than 360".format(span))
-    return None
+                        "the columns span {0:.9g} degrees of longitude, more than 360".format(
+                            span)), False
+            closes = outer == 0 and abs(span - 360.0) <= tol
+    return None, closes
 
 
 def _build_graph(geom, connectivity):
     """:class:`WetGraph` of ``geom`` for the declared grid kind: node pairs from
-    :func:`_latlon_pairs` (``"latlon"``, after :func:`_latlon_problem` finds the
+    :func:`_latlon_pairs` (``"latlon"``, after :func:`_latlon_check` finds the
     grid regular; otherwise :class:`BuildError`) or :func:`_corner_pairs`
     (``"exch2"``), without duplicates or self-pairs, stored as up to 4
     neighbours per node with the great-circle distance between the centers."""
@@ -927,13 +984,13 @@ def _build_graph(geom, connectivity):
             connectivity, ", ".join(CONNECTIVITIES)))
     diag = {}
     if connectivity == "latlon":
-        problem = _latlon_problem(geom)
+        problem, periodic = _latlon_check(geom)
         if problem is not None:
             raise BuildError(
                 "grid: connectivity 'latlon' was declared, but the valid cells are not one "
                 "regular lat-lon block: {0}. Use connectivity='exch2' for a cubed-sphere, "
                 "LLC or other grid".format(problem))
-        pairs, periodic = _latlon_pairs(geom)
+        pairs = _latlon_pairs(geom, periodic)
     else:
         pairs, diag = _corner_pairs(geom)
         periodic = False
@@ -959,17 +1016,14 @@ def _build_graph(geom, connectivity):
     return WetGraph(geom.wet_cells, nbr, dist, connectivity, periodic, diag)
 
 
-def _latlon_pairs(geom):
+def _latlon_pairs(geom, closes):
     """Wet node pairs of a regular lat-lon block: (i+1, j) and (i, j+1)
     neighbours, plus the zonal wrap.
 
-    The wrap is decided row by row, from the rows whose first and last cells
-    are both valid: such a row closes when the east edge of its last cell,
-    ``2 XC - XG``, is 360 degrees east of ``XG`` of its first cell (within
-    :data:`LATLON_EDGE_TOL` of that cell's width), and exactly those rows get
-    the link between their end cells when both are wet. A blank tile at an end
-    column therefore removes the wrap only in its own rows. Returns the pairs
-    and whether any row closes.
+    ``closes`` comes from :func:`_latlon_check`: the block closes 360 degrees
+    in longitude, measured on the unwrapped span. Then every row whose first
+    and last cells are both wet gets the link between them. A blank tile at
+    an end column therefore removes the wrap only in its own rows.
     """
     nx, ny = geom.nx, geom.ny
     w = geom.wet_cells
@@ -979,16 +1033,12 @@ def _latlon_pairs(geom):
         ok = nb >= 0
         ok[ok] = geom.wet[nb[ok]]
         out.append(np.stack([geom.wet_pos[w[ok]], geom.wet_pos[nb[ok]]], axis=1))
-    first = np.arange(ny) * nx
-    last = first + nx - 1
-    both = geom.valid[first] & geom.valid[last]
-    width = 2.0 * (geom.lon[last] - geom.glon[last])
-    span = geom.glon[last] + width - geom.glon[first]
-    with np.errstate(invalid="ignore"):
-        closes = both & (np.abs(span - 360.0) <= LATLON_EDGE_TOL * np.abs(width))
-    link = closes & geom.wet[first] & geom.wet[last]
-    out.append(np.stack([geom.wet_pos[last[link]], geom.wet_pos[first[link]]], axis=1))
-    return np.concatenate(out), bool(closes.any())
+    if closes:
+        first = np.arange(ny) * nx
+        last = first + nx - 1
+        link = geom.wet[first] & geom.wet[last]
+        out.append(np.stack([geom.wet_pos[last[link]], geom.wet_pos[first[link]]], axis=1))
+    return np.concatenate(out)
 
 
 def _vertex_ids(geom):
@@ -1020,9 +1070,15 @@ def _geometric_corners(geom, vid, cells):
     This rejects the corners of neighbouring cells. When no vertex qualifies,
     neither corner is a valid cell's SW corner (blank tiles, or an open
     boundary, on two adjacent sides) and :func:`_predicted_pair` places both.
+
+    A cell found to be a triangle (:func:`_triangle_cell`) is a
+    :class:`BuildError`: the search above assumes four distinct corners.
     """
     P, G = geom.centers, geom.corners
+    # One search point per vertex: the cell that gives the vertex its id. (A row of
+    # cells whose SW corners all lie at a pole would otherwise fill every query.)
     valid_cells = np.nonzero(geom.valid)[0]
+    valid_cells = valid_cells[vid[valid_cells] == valid_cells]
     verts = G[valid_cells]
     index = _PointIndex(verts)
     rows = np.arange(len(cells))
@@ -1045,6 +1101,10 @@ def _geometric_corners(geom, vid, cells):
     usable = ((cand != own[:, None]) & (cand != ne_id[:, None]) & (along > 0) & (along < 2)
               & (quarter >= CORNER_AREA_RANGE[0]) & (quarter <= CORNER_AREA_RANGE[1]))
     has = usable.any(axis=1)
+    triangle = _triangle_cell(P, valid_cells[k_c], off, along, quarter, cand != own[:, None],
+                              ~has, ~ne_ok, sr, pr, ne_pred, area)
+    if triangle is not None:
+        raise BuildError(_DEGENERATE.format(geom.describe(cells[triangle[0]]), triangle[1]))
     first = np.argmax(usable, axis=1)
     u_id = np.where(has, cand[rows, first], -1)
     w_pred = _reflect(pr, verts[k_c[rows, first]])
@@ -1107,49 +1167,85 @@ def _predicted_pair(index, verts, p, sw, area, ne):
 
 
 _DEGENERATE = (
-    "grid: connectivity 'exch2': {0} has a zero-length edge ({1}). The corner method needs "
-    "cells with four distinct corners. A regular lat-lon grid, in particular one with a "
-    "wet row that touches a pole, must be declared connectivity='latlon' (--connectivity "
-    "latlon), also when the run uses pkg/exch2 and so has a data.exch2 file")
+    "grid: connectivity 'exch2': {0} is a triangle, not a quadrilateral: two of its "
+    "corners coincide ({1}). The corner method needs cells with four distinct corners. A "
+    "regular lat-lon grid with a wet row that touches a pole must be declared "
+    "connectivity='latlon' (--connectivity latlon), also when the run uses pkg/exch2 and "
+    "so has a data.exch2 file; a rotated grid with such a row is not supported")
 
 
-def _degenerate_edge(geom):
-    """The first wet cell seen to have a zero-length edge, as ``(cell, why)``,
-    or None.
+def _triangle_cell(centers, owner, off, along, quarter, notown, no_pair, no_ne, sw, p, ne_pred,
+                   area):
+    """The first cell that is a triangle rather than a quadrilateral, as
+    ``(row, why)``, or None.
 
-    Two cases are visible before the corner search. The cell's SW corner
-    coincides (within :data:`VERTEX_EPS`) with the SW corner of a valid array
-    neighbour, so the edge between them has no length: the row of a lat-lon
-    grid whose SW corners are all at the south pole. Or the edge opposite the
-    SW corner collapses onto a geographic pole: ``2 YC - YG`` is +-90 degrees
-    (within :data:`POLE_TOL`) while the center is not on the SW corner's
-    meridian, as in the row of a lat-lon grid that ends at the north pole. (A
-    cubed-sphere cell with one corner at the pole has its center on the
-    meridian of the opposite corner, and is not degenerate.)
+    Only the cell's geometry is used: its SW corner ``sw``, its center ``p``,
+    its unit-sphere ``area``, and the nearby vertices ``sw + off``, each the
+    SW corner of the cell ``owner``. Both signatures require ``no_ne``: no
+    vertex lies where the NE corner of a quadrilateral would be (the SW corner
+    rotated by 180 degrees about the center, ``ne_pred``).
+
+    * Apex beyond the center (the edge opposite the SW corner, or one beside
+      it, has collapsed). The cell has no vertex that qualifies as its SE or
+      NW corner (``no_pair``), and some vertex v between the SW corner and
+      ``ne_pred`` satisfies all of:
+
+      - twice the triangle (SW, v, center) is the whole cell area
+        (:data:`TRIANGLE_RANGE`), where a quadrilateral has half;
+      - the apex X implied by a triangle whose center is midway between the
+        base (SW, v) and X, i.e. the midpoint of SW and v rotated by 180
+        degrees about the center, is equally far from SW and v (within 5
+        percent);
+      - the center of the cell owning v is as far from X as this cell's
+        center (within 10 percent), as for two cells of one fan.
+
+    * Apex at the SW corner: two vertices a and b are equally far from the
+      SW corner (within 10 percent), their midpoint is ``ne_pred`` (within a
+      tenth of ``|a - b|``), and the triangle (SW, a, b) has the cell area
+      (:data:`APEX_TRIANGLE_RANGE`), where a quadrilateral's SE and NW
+      corners give half.
+
+    The polar cells of a lat-lon grid, rotated or not, meet these exactly up
+    to the curvature of the sphere. In a mesh of parallelograms no vertex
+    meets the first set exactly, nor any pair the second.
     """
-    nx, ny = geom.nx, geom.ny
-    w = geom.wet_cells
-    G = geom.corners
-    i, j = w % nx, w // nx
-    for step, ok, name in ((1, i + 1 < nx, "east"), (-1, i > 0, "west"),
-                           (nx, j + 1 < ny, "north"), (-nx, j > 0, "south")):
-        a = w[ok]
-        b = a + step
-        use = geom.valid[b]
-        a, b = a[use], b[use]
-        same = _norm(G[a] - G[b]) <= VERTEX_EPS
-        if same.any():
-            return int(a[np.argmax(same)]), ("its SW corner (XG, YG) is also the SW corner of "
-                                             "its {0} array neighbour".format(name))
-    reach = 2.0 * geom.lat[w] - geom.glat[w]
-    off = np.abs(np.sin(np.deg2rad(geom.lon[w] - geom.glon[w])))
-    pole = ((np.abs(np.abs(reach) - 90.0) <= POLE_TOL)
-            & (np.abs(geom.glat[w]) < 90.0 - POLE_TOL) & (off > 1e-9))
-    if pole.any():
-        k = int(np.argmax(pole))
-        return int(w[k]), ("the edge opposite its SW corner collapses onto the {0} pole: "
-                           "2 YC - YG = {1:.9g}".format("north" if reach[k] > 0 else "south",
-                                                        reach[k]))
+    base = _norm(off)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        v = sw[:, None, :] + off
+        mid = sw[:, None, :] + 0.5 * off
+        apex = _reflect(p[:, None, :], mid / _norm(mid)[..., None])
+        d_sw, d_v = _norm(apex - sw[:, None, :]), _norm(apex - v)
+        d_c, d_q = _norm(apex - p[:, None, :]), _norm(apex - centers[owner])
+        far = ((no_pair & no_ne)[:, None] & notown & (base > 0) & (along > 0) & (along < 2)
+               & (quarter >= TRIANGLE_RANGE[0]) & (quarter <= TRIANGLE_RANGE[1])
+               & (np.abs(d_sw - d_v) <= 0.05 * np.maximum(d_sw, d_v))
+               & (np.abs(d_q - d_c) <= 0.1 * d_c))
+        if far.any():
+            r = int(np.argmax(far.any(axis=1)))
+            k = int(np.argmax(far[r]))
+            return r, ("RAC is {0:.3g} of 2|(v - SW) x (C - SW)| for its neighbouring corner v, "
+                       "the SW corner of cell {1}: 0.5 is a triangle with the apex beyond the "
+                       "center C, 1 a quadrilateral".format(1.0 / quarter[r, k], owner[r, k]))
+        for r0 in range(0, len(off), 20000):          # all pairs of vertices, in bounded blocks
+            rows = slice(r0, r0 + 20000)
+            a, b = off[rows, :, None, :], off[rows, None, :, :]
+            la, lb = base[rows, :, None], base[rows, None, :]
+            span = _norm(a - b)
+            mid = sw[rows, None, None, :] + 0.5 * (a + b)
+            mid = mid / _norm(mid)[..., None]
+            tri = 0.5 * _norm(np.cross(a, b)) / area[rows, None, None]
+            pair = (no_ne[rows, None, None] & notown[rows, :, None] & notown[rows, None, :]
+                    & (span > 0) & (_norm(mid - ne_pred[rows, None, None, :]) <= 0.1 * span)
+                    & (np.abs(la - lb) <= 0.1 * np.maximum(la, lb))
+                    & (tri >= APEX_TRIANGLE_RANGE[0]) & (tri <= APEX_TRIANGLE_RANGE[1]))
+            if pair.any():
+                r = int(np.argmax(pair.any(axis=(1, 2))))
+                ka, kb = np.unravel_index(int(np.argmax(pair[r])), pair[r].shape)
+                return r0 + r, (
+                    "the triangle formed by its SW corner and the SW corners of cells {0} and "
+                    "{1} has {2:.3g} of the area RAC: 1 is a triangle with the apex at the SW "
+                    "corner, 0.5 a quadrilateral".format(
+                        owner[r0 + r, ka], owner[r0 + r, kb], tri[r, ka, kb]))
     return None
 
 
@@ -1159,16 +1255,15 @@ def _corner_pairs(geom):
     Cells whose array neighbours pass the quadrilateral test take their
     corners from the array; the others from :func:`_geometric_corners`.
     Returns the pairs and the counts reported in ``WetGraph.diagnostics``.
-    A wet cell with a zero-length edge (:func:`_degenerate_edge`, or two of
-    its corners being the same vertex) is a :class:`BuildError` that names
-    the cell and points to ``connectivity='latlon'``: its links can't be
-    matched by corners, and would otherwise be lost silently.
+    A wet cell that is a triangle (:func:`_triangle_cell`, or two of its
+    resolved corners closer than :data:`COLLAPSE_TOL` times ``sqrt(RAC)``)
+    is a :class:`BuildError` that names the cell and points to
+    ``connectivity='latlon'``: its links can't be matched by corners, and
+    would otherwise be lost silently. A cell with four distinct corners is
+    never refused for this reason.
     """
     nx, ny = geom.nx, geom.ny
     P, G = geom.centers, geom.corners
-    degenerate = _degenerate_edge(geom)
-    if degenerate is not None:
-        raise BuildError(_DEGENERATE.format(geom.describe(degenerate[0]), degenerate[1]))
     vid = _vertex_ids(geom)
     w = geom.wet_cells
     nw = w.size
@@ -1182,7 +1277,8 @@ def _corner_pairs(geom):
     side = np.min(np.stack([_norm(G[e] - s), _norm(G[n] - s), _norm(G[ne] - G[e]),
                             _norm(G[ne] - G[n])], axis=1), axis=1)
     with np.errstate(invalid="ignore"):
-        quad = (ok & (side > 0)
+        root = np.sqrt(geom.area[w]) / geom.radius        # sqrt(RAC) on the unit sphere
+        quad = (ok & (side > COLLAPSE_TOL * root)
                 & (_norm(_reflect(p, s) - G[ne]) <= CORNER_TOL * side)
                 & (_norm(_reflect(p, G[e]) - G[n]) <= CORNER_TOL * side))
     ids = np.stack([vid[w], vid[e], vid[ne], vid[n]], axis=1)   # cyclic: SW, SE, NE, NW
@@ -1195,11 +1291,17 @@ def _corner_pairs(geom):
         for (r, slot), pos in gsynth.items():
             synth[(int(rest[r]), slot)] = pos
         scale = dict(zip(rest.tolist(), m_est.tolist()))
-    for s0, s1 in ((0, 1), (1, 2), (2, 3), (3, 0), (0, 2), (1, 3)):
-        same = (ids[:, s0] >= 0) & (ids[:, s0] == ids[:, s1])
-        if same.any():
-            raise BuildError(_DEGENERATE.format(
-                geom.describe(w[np.argmax(same)]), "two of its corners are the same vertex"))
+        # resolved corner positions of these cells: vertices, or synthesized points
+        pos = G[np.maximum(gids, 0)]
+        for (r, slot), x in gsynth.items():
+            pos[r, slot] = x
+        for s0, s1 in ((0, 1), (1, 2), (2, 3), (3, 0), (0, 2), (1, 3)):
+            same = _norm(pos[:, s0] - pos[:, s1]) <= COLLAPSE_TOL * root[rest]
+            if same.any():
+                raise BuildError(_DEGENERATE.format(
+                    geom.describe(w[rest[np.argmax(same)]]),
+                    "two of its resolved corners are less than {0:g} sqrt(RAC) apart".format(
+                        COLLAPSE_TOL)))
     # Edges: consecutive corners. Vertex-vertex edges match exactly.
     nodes = np.arange(nw)
     keys, owners = [], []
