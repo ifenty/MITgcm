@@ -10,7 +10,8 @@ Library use::
 
     from MITgcmutils.runoff import build_targets, write_targets
     tables = build_targets("sources.csv", "run/", emission="spread",
-                           spread_type="gaussian", spread_scale="25km")
+                           spread_type="gaussian", spread_scale="25km",
+                           connectivity="latlon")     # or "exch2" (module notes)
     write_targets("targets.nc", tables)
 
 Command line::
@@ -19,7 +20,7 @@ Command line::
         -o OUT.nc [--into RUNOFF.nc] [--emission {pointwise,spread}]
         [--spread-type {gaussian,exponential,linear}] [--spread-scale X]
         [--cutoff C] [--max-snap-distance D] [--earth-radius R]
-        [--connectivity {auto,index,corners}] [--grid-name NAME] [--no-check]
+        [--connectivity {latlon,exch2}] [--grid-name NAME] [--no-check]
 
 Exit status: 0 success, 1 invalid input or checker errors in the output, 2
 usage or I/O problem. Unless ``--no-check`` is given, the output is checked
@@ -75,16 +76,29 @@ Algorithm (``docs/runoff_schema.md`` section 13)
 Implementation notes
 --------------------
 * **Neighbour graph** (:func:`wet_graph`): two wet cells are neighbours when
-  they share a cell edge, i.e. two corners. There are two methods:
+  they share a cell edge, i.e. two corners. The user declares the grid kind
+  with ``connectivity``; it is never inferred from the grid geometry, because
+  blank tiles can make an exch2 layout look like a lat-lon block.
 
-  - ``index``, for a grid stored as one logically rectangular block:
-    neighbours are ``(i+-1, j)`` and ``(i, j+-1)``, with a zonal wrap
-    between ``i = nx-1`` and ``i = 0`` when, in every row, ``SW(0, j)`` is
-    as far from the center of ``(nx-1, j)`` as that cell's own SW corner
-    (within :data:`WRAP_TOL`), i.e. it is that cell's SE corner.
-  - ``corners``, for every other grid, in particular exch2 global I/O
-    layouts (cubed sphere, LLC), whose array neighbours at face or tile
-    boundaries are not grid neighbours.
+  - ``latlon``, for a single regular lat-lon block: neighbours are
+    ``(i+-1, j)`` and ``(i, j+-1)``, plus the zonal wrap between ``i = nx-1``
+    and ``i = 0``. The wrap is decided row by row, from the rows whose first
+    and last cells are both valid: such a row closes when the east edge of
+    its last cell, ``2 XC - XG``, is 360 degrees east of ``XG`` of its first
+    cell (within :data:`LATLON_EDGE_TOL` of the cell width), and exactly
+    those rows get the wrap link. A blank tile at an end column removes the
+    wrap only in its own rows. The declaration is checked
+    (:func:`_latlon_problem`): over the valid cells (``RAC > 0``) ``XC`` and
+    ``XG`` must depend only on ``i`` and ``YC`` and ``YG`` only on ``j``
+    (within :data:`LATLON_TOL` degrees), and consecutive columns and rows
+    that hold valid cells must share an edge. A grid that fails is an error
+    naming the violation; lat-lon facets stacked in the array fail one test
+    or the other.
+  - ``exch2``, for exch2 global I/O layouts (cubed sphere, LLC), whose
+    array neighbours at face or tile boundaries are not grid neighbours, and
+    for any other grid that is not a regular lat-lon block (it gives the
+    array neighbours of a rotated block). Neighbours are found from the cell
+    corners.
     A cell's four corners are found as vertex ids: its SW corner
     ``(XG, YG)`` is its own vertex; the SW corners of its east, north and
     north-east array neighbours are accepted as its SE, NW and NE corners
@@ -116,24 +130,22 @@ Implementation notes
     or south edge of one of them, so it has that cell's SW corner as a
     vertex. An edge shared by more than two cells is an error.
 
-  ``connectivity="auto"`` (the default) uses ``index`` only when the grid is
-  provably one regular lat-lon block: over the valid cells (``RAC > 0``)
-  ``XC`` and ``XG`` depend only on ``i`` and ``YC`` and ``YG`` only on ``j``
-  (within :data:`LATLON_TOL` degrees), and no array neighbour's SW corner is
-  more than :data:`MOSAIC_RATIO` times as far from a cell's center as the
-  cell's own SW corner. Every other grid gets ``corners``: a cubed-sphere or
-  LLC layout never gets ``index``, even when blank tiles hide all of its
-  mismatched array neighbours, and neither does a rotated or curvilinear
-  single block. For such a block, and for an exch2 layout with hidden
-  seams, every array-neighbour pair is a true neighbour, so ``auto`` checks
-  that the corner graph contains them all; if it does not, or the corner
-  method fails, ``auto`` stops with an error that says to pass
-  ``connectivity`` explicitly. An explicit ``index`` is refused when an
-  array neighbour is visibly mismatched; otherwise it asserts that the
-  array is one block. An explicit ``corners`` is used as it is.
+  When ``connectivity`` is not given, ``exch2`` is used if the grid
+  directory contains MITgcm's ``data.exch2`` file; otherwise the builder
+  stops with an error that explains the two choices. There is no default
+  for lat-lon grids, and a grid given as arrays always needs the
+  declaration. The graph is needed, and the declaration required, only when
+  some source has spread emission.
+
+  The guarantee is therefore conditional on the declaration: ``latlon`` on
+  a grid that is not a regular lat-lon block is refused, and ``exch2``
+  stops on corners it cannot match consistently (an edge shared by more
+  than two cells, or a cell with more than four neighbours). ``exch2``
+  declared on a lat-lon grid gives the same neighbours as ``latlon`` on the
+  grids tested (below).
 
   On the ``global_ocean.cs32x15`` grid with every cell treated as wet, the
-  ``corners`` method gives every cell 4 neighbours: 12288 edges, 384 of them
+  ``exch2`` method gives every cell 4 neighbours: 12288 edges, 384 of them
   across faces (12 cube edges x 32), 6144 stored and 2 synthesized vertices
   (Euler characteristic 2). The largest in-face rotation error there is 0.33
   of the shortest side; the synthesized cube corners are 0.73 of the
@@ -147,13 +159,16 @@ Implementation notes
   side, two adjacent sides, all four sides of a tile, across a cube corner,
   with and without land beside them; and all 348 all-land 2 x 2 tiles of the
   real mask), the graph equals the all-wet graph restricted to the wet
-  cells. With eight blank 8 x 8 tiles hiding every mismatched array seam of
-  cs32, ``auto`` still uses ``corners`` and is exact, where ``index`` would
-  lose 192 cross-face edges. On open lat-lon grids at 55N-63N with cell
-  aspect ratios from about 1/8 to 2, and on a lat-lon block rotated over the
-  North Pole, the ``corners`` method gives the array neighbours. The
-  ``corners`` method assumes cells that are close to parallelograms around
-  their centers; no LLC grid was available to test it.
+  cells. That includes eight blank 8 x 8 tiles that hide every mismatched
+  array seam of cs32, where index neighbours would lose 192 cross-face
+  edges. On two lat-lon facets stacked in the array, with and without blank
+  tiles, ``exch2`` finds the facet seam links and ``latlon`` is refused. On
+  lat-lon grids (periodic with blank tiles at the end columns; open at
+  55N-63N with cell aspect ratios from about 1/8 to 2) ``exch2`` gives the
+  ``latlon`` neighbours, and on a lat-lon block rotated over the North Pole
+  it gives the array neighbours. The ``exch2`` method assumes cells that are
+  close to parallelograms around their centers; no LLC grid was available
+  to test it.
 * **Search:** nearest-cell and nearest-vertex searches use
   ``scipy.spatial.cKDTree`` on unit vectors (chord distance, which orders
   points as great-circle distance does) when scipy is installed, and
@@ -200,7 +215,8 @@ SPREAD_TYPES = ("gaussian", "exponential", "linear")
 CUTOFF_FACTOR = 3.0
 #: Linear kernel: ``Rcut = LINEAR_CUTOFF_FACTOR * X``, so that ``W(X) = 1/e``.
 LINEAR_CUTOFF_FACTOR = 1.0 / (1.0 - math.exp(-1.0))
-CONNECTIVITIES = ("auto", "index", "corners")
+#: Grid kinds the user declares with ``connectivity`` (module notes).
+CONNECTIVITIES = ("latlon", "exch2")
 
 #: Neighbour-graph tolerances (module notes). Corner predictions must be
 #: within CORNER_TOL of the cell's shortest side of a vertex.
@@ -214,16 +230,13 @@ CORNER_AREA_RANGE = (0.5, 1.5)
 #: Two synthesized predictions of one corner are at most this far apart, in
 #: units of the shorter of the two cells' shortest sides.
 SYNTH_MERGE_TOL = 1.0
-#: An array neighbour's SW corner this many times farther from a cell's center
-#: than the cell's own SW corner is a visible mismatch: the array is an exch2
-#: mosaic. ``auto`` then uses ``corners`` and an explicit ``index`` is refused.
-MOSAIC_RATIO = 2.5
-#: ``auto`` uses ``index`` only for a regular lat-lon block: over the valid
-#: cells XC and XG vary by at most this many degrees along a column, and YC
-#: and YG along a row.
+#: ``latlon``: over the valid cells XC and XG vary by at most this many degrees
+#: along a column, and YC and YG along a row.
 LATLON_TOL = 1e-6
-#: ``index``: zonal wrap when every row's distance ratio is within 1 +- this.
-WRAP_TOL = 0.1
+#: ``latlon``: consecutive columns (rows) share an edge, and a row closes 360
+#: degrees, within this fraction of the cell width. It allows for grid files
+#: written in single precision.
+LATLON_EDGE_TOL = 0.01
 #: SW corners whose unit vectors round to the same multiples of this (about
 #: 6 mm on the Earth) are one vertex.
 VERTEX_EPS = 1e-9
@@ -665,7 +678,10 @@ class _Geom:
     """Flattened grid geometry: cell ``c = i + nx*j``."""
 
     def __init__(self, grid, radius):
+        #: Grid directory when the grid was read from files (for the data.exch2 default).
+        self.grid_dir = None
         if isinstance(grid, (str, bytes, os.PathLike)):
+            self.grid_dir = os.fsdecode(grid)
             grid = read_grid(grid)
         arrays = {}
         for name in _GRID_FIELDS:
@@ -736,7 +752,7 @@ class WetGraph:
     ``cells[k]`` is the global cell index of node ``k`` (ascending);
     ``neighbours[k]`` holds up to 4 node indices (-1 for none) and
     ``distances[k]`` the great-circle distances (m) between the centers.
-    ``diagnostics`` counts how the corners were found (``corners`` method).
+    ``diagnostics`` counts how the corners were found (``exch2`` method).
     """
     cells: np.ndarray
     neighbours: np.ndarray
@@ -756,107 +772,109 @@ class WetGraph:
         return np.count_nonzero(self.neighbours >= 0, axis=1)
 
 
-def wet_graph(grid, *, connectivity="auto", earth_radius=EARTH_RADIUS):
+def wet_graph(grid, *, connectivity=None, earth_radius=EARTH_RADIUS):
     """Edge-neighbour graph of the wet surface cells of ``grid`` (a grid
-    directory or a dict of arrays, as for :func:`build_targets`)."""
+    directory or a dict of arrays, as for :func:`build_targets`).
+    ``connectivity`` is ``"latlon"`` or ``"exch2"``; when it is None,
+    :func:`_resolve_connectivity` applies the ``data.exch2`` default or stops."""
     geom = grid if isinstance(grid, _Geom) else _Geom(grid, earth_radius)
-    return _build_graph(geom, connectivity)
+    return _build_graph(geom, _resolve_connectivity(connectivity, geom.grid_dir))
 
 
-def _is_mosaic(geom):
-    """True when an array neighbour's SW corner is far from a cell (exch2 layout)."""
-    nx, ny = geom.nx, geom.ny
-    P, G, v = geom.centers, geom.corners, geom.valid
-    h = _norm(G - P)
-    c = np.arange(geom.n)
-    for step, ok in ((1, (c % nx) + 1 < nx), (nx, (c // nx) + 1 < ny)):
-        a = c[ok]
-        b = a + step
-        use = v[a] & v[b] & (h[a] > 0)
-        a, b = a[use], b[use]
-        if a.size and (_norm(G[b] - P[a]) > MOSAIC_RATIO * h[a]).any():
-            return True
-    return False
+def _resolve_connectivity(connectivity, grid_dir):
+    """The declared grid kind, ``"latlon"`` or ``"exch2"``.
 
-
-def _is_latlon_block(geom):
-    """True when, over the valid cells (``RAC > 0``), ``XC`` and ``XG`` depend
-    only on ``i`` and ``YC`` and ``YG`` only on ``j``, within
-    :data:`LATLON_TOL` degrees: a regular lat-lon grid. Blank tiles do not
-    count, so they cannot make another grid look regular unless what remains
-    valid really is."""
-    valid = geom.valid.reshape(geom.ny, geom.nx)
-    for field, axis in ((geom.lon, 0), (geom.glon, 0), (geom.lat, 1), (geom.glat, 1)):
-        a = field.reshape(geom.ny, geom.nx)
-        lo = np.where(valid, a, np.inf).min(axis=axis)
-        hi = np.where(valid, a, -np.inf).max(axis=axis)
-        some = valid.any(axis=axis)
-        if (hi[some] - lo[some] > LATLON_TOL).any():
-            return False
-    return True
-
-
-def _require_array_links(geom, pairs):
-    """``auto`` safeguard for a grid that is not a regular lat-lon block but
-    shows no mismatched array neighbour (a rotated or curvilinear block, or an
-    exch2 layout whose mismatched seams are hidden by blank tiles): every
-    array-neighbour pair of wet cells is then a true neighbour and must be in
-    the corner graph ``pairs``. Raises :class:`BuildError` otherwise, rather
-    than return a graph that may be wrong."""
-    nw = geom.wet_cells.size
-    want, _ = _index_pairs(geom)
-    want, have = np.sort(want, axis=1), np.sort(pairs, axis=1)
-    lost = np.setdiff1d(want[:, 0] * nw + want[:, 1], have[:, 0] * nw + have[:, 1])
-    if lost.size:
-        a, b = geom.wet_cells[lost[0] // nw], geom.wet_cells[lost[0] % nw]
+    The kind is never inferred from the grid geometry. When ``connectivity``
+    is None it is ``"exch2"`` if ``grid_dir`` contains MITgcm's ``data.exch2``
+    file; otherwise a :class:`BuildError` explains the two choices.
+    """
+    if connectivity is None:
+        if grid_dir is not None and os.path.isfile(os.path.join(grid_dir, "data.exch2")):
+            return "exch2"
+        where = ("the grid was given as arrays" if grid_dir is None else
+                 "{0} has no data.exch2 file".format(grid_dir))
         raise BuildError(
-            "grid: connectivity 'auto' can't establish the neighbour graph. The grid is "
-            "not one regular lat-lon block, so the corner method was used, but it does "
-            "not link {0} pair(s) of array neighbours that look adjacent (first: {1} and "
-            "{2}). Pass connectivity='index' if the grid is one logically rectangular "
-            "block, or connectivity='corners' to use the corner graph as it is".format(
-                lost.size, geom.describe(a), geom.describe(b)))
-
-
-def _build_graph(geom, connectivity):
-    """:class:`WetGraph` of ``geom``: node pairs from :func:`_index_pairs` or
-    :func:`_corner_pairs`, without duplicates or self-pairs, stored as up to 4
-    neighbours per node with the great-circle distance between the two centers.
-
-    ``auto`` uses ``index`` only when the grid is a regular lat-lon block
-    (:func:`_is_latlon_block`) with no mismatched array neighbour
-    (:func:`_is_mosaic`), and ``corners`` otherwise; if the corner method
-    then fails, or misses array-neighbour links (:func:`_require_array_links`),
-    the error tells the user to pass ``connectivity`` explicitly. An explicit
-    ``index`` is refused when an array neighbour is visibly not a grid
-    neighbour."""
+            "connectivity is not set and {0}, so the grid kind is unknown. Pass "
+            "connectivity='latlon' (--connectivity latlon) for a single regular lat-lon "
+            "block, whose neighbours are (i+-1, j) and (i, j+-1) with a zonal wrap when the "
+            "grid closes in longitude, or connectivity='exch2' (--connectivity exch2) for a "
+            "cubed-sphere, LLC or other grid, whose neighbours are found from the cell "
+            "corners. Without it, 'exch2' is used only when the grid directory contains "
+            "data.exch2; there is no default for lat-lon grids".format(where))
     if connectivity not in CONNECTIVITIES:
         raise BuildError("connectivity {0!r} is not one of {1}".format(
             connectivity, ", ".join(CONNECTIVITIES)))
-    mosaic = _is_mosaic(geom)
-    if connectivity == "index" and mosaic:
-        raise BuildError("connectivity 'index': array neighbours are not grid neighbours "
-                         "on this grid (an exch2 layout); use 'corners' or 'auto'")
-    auto = connectivity == "auto"
-    if auto:
-        method = "index" if not mosaic and _is_latlon_block(geom) else "corners"
-    else:
-        method = connectivity
+    return connectivity
+
+
+def _latlon_problem(geom):
+    """None when the valid cells (``RAC > 0``) form one regular lat-lon block,
+    else a sentence naming the first violation.
+
+    Regular means: ``XC`` and ``XG`` depend only on ``i`` and ``YC`` and
+    ``YG`` only on ``j`` (within :data:`LATLON_TOL` degrees); each center lies
+    east and north of its SW corner; and consecutive columns, and consecutive
+    rows, that hold valid cells share an edge: the east edge ``2 XC - XG`` of
+    column ``i`` is ``XG`` of column ``i+1``, and likewise in latitude (within
+    :data:`LATLON_EDGE_TOL` of the cell width). The last test rejects lat-lon
+    facets stacked in the array whose valid cells happen to lie in separate
+    columns or rows.
+    """
+    ny, nx = geom.ny, geom.nx
+    valid = geom.valid.reshape(ny, nx)
+    line = {}
+    for name, field, axis, what in (("XC", geom.lon, 0, "column i"), ("XG", geom.glon, 0, "column i"),
+                                    ("YC", geom.lat, 1, "row j"), ("YG", geom.glat, 1, "row j")):
+        a = field.reshape(ny, nx)
+        lo = np.where(valid, a, np.inf).min(axis=axis)
+        hi = np.where(valid, a, -np.inf).max(axis=axis)
+        some = valid.any(axis=axis)
+        bad = some & (np.where(some, hi - lo, 0.0) > LATLON_TOL)
+        if bad.any():
+            k = int(np.argmax(bad))
+            return "{0} varies from {1:.9g} to {2:.9g} degrees along {3} = {4}".format(
+                name, lo[k], hi[k], what, k)
+        line[name] = (np.where(some, lo, 0.0), some)      # lines with no valid cell: unused
+    for cname, gname, what, wrap in (("XC", "XG", "column i", True), ("YC", "YG", "row j", False)):
+        (c, some), g = line[cname], line[gname][0]
+        width = 2.0 * (c - g)
+        bad = some & ~(np.where(some, width, 1.0) > 0)
+        if bad.any():
+            k = int(np.argmax(bad))
+            return "{0} is not greater than {1} in {2} = {3}".format(cname, gname, what, k)
+        pair = some[:-1] & some[1:]
+        gap = np.where(pair, g[1:] - (g[:-1] + width[:-1]), 0.0)
+        if wrap:
+            gap = (gap + 180.0) % 360.0 - 180.0
+        bad = pair & (np.abs(gap) > LATLON_EDGE_TOL * np.where(pair, width[:-1], 1.0))
+        if bad.any():
+            k = int(np.argmax(bad))
+            return ("{0} = {1} ends at {2:.9g} degrees ({3}), but {0} = {4} starts at {5:.9g} "
+                    "({6})".format(what, k, g[k] + width[k], "2 {0} - {1}".format(cname, gname),
+                                   k + 1, g[k + 1], gname))
+    return None
+
+
+def _build_graph(geom, connectivity):
+    """:class:`WetGraph` of ``geom`` for the declared grid kind: node pairs from
+    :func:`_latlon_pairs` (``"latlon"``, after :func:`_latlon_problem` finds the
+    grid regular; otherwise :class:`BuildError`) or :func:`_corner_pairs`
+    (``"exch2"``), without duplicates or self-pairs, stored as up to 4
+    neighbours per node with the great-circle distance between the centers."""
+    if connectivity not in CONNECTIVITIES:
+        raise BuildError("connectivity {0!r} is not one of {1}".format(
+            connectivity, ", ".join(CONNECTIVITIES)))
     diag = {}
-    if method == "index":
-        pairs, periodic = _index_pairs(geom)
-    else:
-        try:
-            pairs, diag = _corner_pairs(geom)
-        except BuildError as e:
-            if not auto:
-                raise
+    if connectivity == "latlon":
+        problem = _latlon_problem(geom)
+        if problem is not None:
             raise BuildError(
-                "{0}\nconnectivity 'auto' used the corner method because the grid is not "
-                "one regular lat-lon block; if it is one logically rectangular block, "
-                "pass connectivity='index'".format(e))
-        if auto and not mosaic:
-            _require_array_links(geom, pairs)
+                "grid: connectivity 'latlon' was declared, but the valid cells are not one "
+                "regular lat-lon block: {0}. Use connectivity='exch2' for a cubed-sphere, "
+                "LLC or other grid".format(problem))
+        pairs, periodic = _latlon_pairs(geom)
+    else:
+        pairs, diag = _corner_pairs(geom)
         periodic = False
     nw = geom.wet_cells.size
     nbr = np.full((nw, 4), -1, dtype=np.int64)
@@ -877,29 +895,39 @@ def _build_graph(geom, connectivity):
         nbr[a, slot] = b
         dist[a, slot] = _haversine(geom.lon[ca], geom.lat[ca], geom.lon[cb], geom.lat[cb],
                                    geom.radius)
-    return WetGraph(geom.wet_cells, nbr, dist, method, periodic, diag)
+    return WetGraph(geom.wet_cells, nbr, dist, connectivity, periodic, diag)
 
 
-def _index_pairs(geom):
-    """Wet node pairs of (i+1, j) and (i, j+1) neighbours, with the zonal wrap."""
+def _latlon_pairs(geom):
+    """Wet node pairs of a regular lat-lon block: (i+1, j) and (i, j+1)
+    neighbours, plus the zonal wrap.
+
+    The wrap is decided row by row, from the rows whose first and last cells
+    are both valid: such a row closes when the east edge of its last cell,
+    ``2 XC - XG``, is 360 degrees east of ``XG`` of its first cell (within
+    :data:`LATLON_EDGE_TOL` of that cell's width), and exactly those rows get
+    the link between their end cells when both are wet. A blank tile at an end
+    column therefore removes the wrap only in its own rows. Returns the pairs
+    and whether any row closes.
+    """
     nx, ny = geom.nx, geom.ny
-    rows = np.arange(ny)
-    first, last = rows * nx, rows * nx + nx - 1
-    periodic = False
-    if nx > 2 and geom.valid[first].all() and geom.valid[last].all():
-        P, G = geom.centers, geom.corners
-        ratio = _norm(G[first] - P[last]) / _norm(G[last] - P[last])
-        periodic = bool(np.all(np.abs(ratio - 1.0) <= WRAP_TOL))
     w = geom.wet_cells
     i, j = w % nx, w // nx
-    east = np.where(i + 1 < nx, w + 1, (w - (nx - 1)) if periodic else -1)
-    north = np.where(j + 1 < ny, w + nx, -1)
     out = []
-    for nb in (east, north):
+    for nb in (np.where(i + 1 < nx, w + 1, -1), np.where(j + 1 < ny, w + nx, -1)):
         ok = nb >= 0
         ok[ok] = geom.wet[nb[ok]]
         out.append(np.stack([geom.wet_pos[w[ok]], geom.wet_pos[nb[ok]]], axis=1))
-    return np.concatenate(out), periodic
+    first = np.arange(ny) * nx
+    last = first + nx - 1
+    both = geom.valid[first] & geom.valid[last]
+    width = 2.0 * (geom.lon[last] - geom.glon[last])
+    span = geom.glon[last] + width - geom.glon[first]
+    with np.errstate(invalid="ignore"):
+        closes = both & (np.abs(span - 360.0) <= LATLON_EDGE_TOL * np.abs(width))
+    link = closes & geom.wet[first] & geom.wet[last]
+    out.append(np.stack([geom.wet_pos[last[link]], geom.wet_pos[first[link]]], axis=1))
+    return np.concatenate(out), bool(closes.any())
 
 
 def _vertex_ids(geom):
@@ -1207,7 +1235,7 @@ class TargetTables:
 
 def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
                   spread_scale=None, cutoff=None, max_snap_distance=DEFAULT_MAX_SNAP_DISTANCE,
-                  earth_radius=EARTH_RADIUS, connectivity="auto"):
+                  earth_radius=EARTH_RADIUS, connectivity=None):
     """Build the source, alias and target tables (module notes, algorithm).
 
     Parameters
@@ -1226,8 +1254,13 @@ def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
         ``cutoff`` if smaller.
     earth_radius : float or str
         Sphere radius for great-circle distances, m.
-    connectivity : {"auto", "index", "corners"}
-        Neighbour-graph method (module notes).
+    connectivity : {"latlon", "exch2"}, optional
+        The grid kind, which decides how neighbours are found for spread
+        sources (module notes): ``"latlon"`` for a single regular lat-lon
+        block, ``"exch2"`` for cubed-sphere, LLC and other grids. When not
+        given, ``"exch2"`` is used if ``grid`` is a directory containing
+        ``data.exch2``; otherwise a spread source is an error that explains
+        the choice. Pointwise sources need no neighbour graph.
 
     Returns
     -------
@@ -1237,7 +1270,9 @@ def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
     ------
     BuildError
         Invalid sources, options or grid; a source farther than its
-        ``max_snap_distance`` from every wet cell. ``errors`` lists all.
+        ``max_snap_distance`` from every wet cell; a spread source without a
+        declared or default ``connectivity``; ``"latlon"`` declared on a grid
+        that is not a regular lat-lon block. ``errors`` lists all.
     OSError
         The source table or a grid field can't be read.
     """
@@ -1248,7 +1283,7 @@ def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
     if not (math.isfinite(radius) and radius > 0):
         raise BuildError("earth_radius = {0!r} must be a positive distance".format(
             earth_radius))
-    if connectivity not in CONNECTIVITIES:
+    if connectivity is not None and connectivity not in CONNECTIVITIES:
         raise BuildError("connectivity {0!r} is not one of {1}".format(
             connectivity, ", ".join(CONNECTIVITIES)))
     src = _load_sources(sources)
@@ -1259,7 +1294,7 @@ def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
     snap_cell, snap_dist = _snap(src, geom, opts)
     graph = None
     if any(o["emission"] == "spread" for o in opts):
-        graph = _build_graph(geom, connectivity)
+        graph = _build_graph(geom, _resolve_connectivity(connectivity, geom.grid_dir))
     ns = len(src.ids)
     t_src, t_cell, t_frac, t_dist = [], [], [], []
     for s in range(ns):
@@ -1634,8 +1669,11 @@ def main(argv=None):
     parser.add_argument("--max-snap-distance", metavar="D", default="50km",
                         help="largest source-to-cell distance (default 50km)")
     parser.add_argument("--earth-radius", metavar="R", default=repr(EARTH_RADIUS))
-    parser.add_argument("--connectivity", choices=CONNECTIVITIES, default="auto",
-                        help="neighbour-graph method (default auto)")
+    parser.add_argument("--connectivity", choices=CONNECTIVITIES,
+                        help="grid kind, needed for spread sources: latlon (a single "
+                             "regular lat-lon block) or exch2 (cubed sphere, LLC, other "
+                             "grids); default exch2 if DIR contains data.exch2, else "
+                             "required")
     parser.add_argument("--grid-name", metavar="NAME", help="mitgcm_grid_name attribute")
     parser.add_argument("--no-check", action="store_true",
                         help="don't run the checker on the output")
