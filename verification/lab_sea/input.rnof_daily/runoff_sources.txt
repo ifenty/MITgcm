@@ -1,0 +1,16 @@
+# lab_sea runoff source cells (written by gendata.py)
+# i, j     : 0-based global cell indices (x, y) of the 20x16 grid
+# cell     : 0-based index in the flattened dense record, j*20 + i
+# lon, lat : cell centre, degrees east and north
+# tile     : tile number (bj-1)*2 + bi of the 2x2 layout of 10x8
+#            tiles, with bi and bj as in code/SIZE.h
+# proc     : 0-based MPI process with code/SIZE.h_mpi (nPx=2, nSy=2)
+# peak     : largest runoff rate the generator can give, m/s
+# group         i   j  cell     lon    lat  bi  bj  tile  proc       peak
+baffin          8  14   288   297.0   75.0   1   2     3     0  6.000e-07
+baffin          9  14   289   299.0   75.0   1   2     3     0  9.000e-07
+baffin         10  14   290   301.0   75.0   2   2     4     1  7.500e-07
+labrador        7   7   147   295.0   61.0   1   1     1     0  8.000e-07
+labrador        7   8   167   295.0   63.0   1   2     3     0  5.000e-07
+greenland      13  11   233   307.0   69.0   2   2     4     1  9.500e-07
+newfound       12   2    52   305.0   51.0   2   1     2     1  7.000e-07

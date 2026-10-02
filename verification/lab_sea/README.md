@@ -186,6 +186,109 @@ in `input.natl_box\` and with `pkg/longstep` in `input.longstep/`.
 The secondary adjoint tests are simpler version of the primary adjoint test,
 without seaice in `input_ad.noseaice/` and without seaice dynamics in `input_ad.noseaicedyn/`.
 
+### Runoff forcing tests
+Six more secondary forward tests add `pkg/exf` runoff to the primary test, one for
+each way `pkg/exf` can time a dense `runoffFile`. Each `input.rnof_<X>/` holds only the
+files that differ from `input/`: `data.exf`, `data` (run length), `data.cal` when the
+start date changes, the runoff file or files, and the script `gendata.py` that wrote them.
+
+| Test | Runoff timing | `data.exf` settings | Run (first step to last step) |
+| --- | --- | --- | --- |
+| `input.rnof_const` | one constant field | `runoffperiod = 0.` | 48 steps, 1979-01-01 01:00 to 1979-01-03 00:00 |
+| `input.rnof_daily` | daily records, not repeated | `runoffstartdate1 = 19790101`, `runoffstartdate2 = 000000`, `runoffperiod = 86400.`, `runoffRepCycle = 0.` | 768 steps (32 days), 1979-01-01 to 1979-02-02; reads records 1 to 33 |
+| `input.rnof_month` | repeating monthly climatology: 12 calendar-month records, January to December, repeated every year | `runoffperiod = -12.` | 1464 steps (61 days), 1979-01-01 to 1979-03-03; uses records 12, 1, 2 and 3 |
+| `input.rnof_month1` | calendar-month records, not repeated; record 1 is December 1978 | `runoffstartdate1 = 19781201`, `runoffstartdate2 = 000000`, `runoffperiod = -1.` | 1464 steps (61 days), 1979-01-01 to 1979-03-03; uses records 1 (December 1978) to 4 (March 1979) |
+| `input.rnof_clim` | 12 equally spaced records with a repeat cycle | `runoffstartdate1 = 19780116`, `runoffstartdate2 = 120000`, `runoffperiod = 2628000.`, `runoffRepCycle = 31536000.` | 1200 steps (50 days), 1978-12-01 to 1979-01-20; uses records 11, 12, 1 and 2 |
+| `input.rnof_yearly` | daily records in yearly files `runoff_yearly_YYYY` | `useExfYearlyFields = .TRUE.`, `runoffstartdate1 = 19780101`, `runoffstartdate2 = 000000`, `runoffperiod = 86400.` | 624 steps (26 days), 1978-12-20 to 1979-01-15; reads `runoff_yearly_1978` and `runoff_yearly_1979` |
+
+The time step is 3600 s. `startDate_1` in `data.cal` is the date at model time 0
+(`pkg/cal/cal_set.F`, lines 235-237), and the runs start at `startTime = 3600.`, so the
+first step is at 01:00 on the start date. The five long tests print the monitor once a
+day (`monitorFreq = 86400.`) and write no pickups (`pChkptFreq = 0.`); nothing else in
+`data` differs from `input/data` apart from `endTime`.
+
+**Runoff sources.** Runoff is in m/s and is zero except at seven coastal cells (wet cells
+with a land neighbour in `bathy.labsea1979`), listed in `runoff_sources.txt` with their
+0-based global indices, position, tile and process:
+
+- three adjacent cells on the northern coast, (i, j) = (8, 14), (9, 14) and (10, 14).
+  They straddle the boundary between columns 9 and 10, which separates two tiles in
+  `code/SIZE.h` and the two processes in `code/SIZE.h_mpi` (`nPx = 2`);
+- two adjacent cells, (7, 7) and (7, 8), that straddle the tile boundary between rows 7
+  and 8, inside one process;
+- one cell on the west Greenland coast, (13, 11), away from tile edges;
+- one cell on the ice-free southern coast, (12, 2).
+
+Every record differs from the others. In the 12-record files December is four times
+January, and the 1979 yearly file is scaled by 0.45 relative to 1978, so a record or
+file chosen wrongly at the turn of the year changes the result. The six records of
+`input.rnof_month1` (December 1978 to May 1979) differ from the climatology of
+`input.rnof_month`, so the two monthly modes cannot be mistaken for each other. Rates stay below
+1e-6 m/s: `input/data.exf` sets `useExfCheckRange = .TRUE.`, and at the first time step
+`EXF_CHECK_RANGE` stops the run if runoff on a wet cell is negative or above 1e-6 m/s
+(`pkg/exf/exf_check_range.F`, lines 177-191 and 211-216, called from
+`pkg/exf/exf_getforcing.F`, lines 346-349).
+
+To regenerate the runoff files (needs python3 with numpy; the output is deterministic):
+
+```
+  cd MITgcm/verification/lab_sea/input.rnof_daily
+  python3 gendata.py
+```
+
+**Timing conventions of `pkg/exf` used by these tests.** Line numbers refer to the
+source files in `pkg/exf/` unless another package is named.
+
+- *Constant field* (`runoffperiod = 0.`, the default set in `exf_readparms.F`, line 440).
+  `EXF_INIT_FLD` reads record 1 once at initialisation (`exf_init_fld.F`, lines 98-126),
+  and `EXF_SET_FLD` skips the field afterwards (`exf_set_fld.F`, line 120).
+- *Start time* (`exf_getffield_start.F`, lines 80-104). For a positive period,
+  `runoffstartdate1` and `runoffstartdate2` give the date of record 1; for
+  `runoffperiod = -1.` without yearly files they give the month of record 1. Without yearly
+  files it is converted to model time. With yearly files only its offset from 1 January
+  is kept, and that offset applies to every yearly file.
+- *Records without a repeat cycle* (`exf_getffieldrec.F`, lines 119-132). With
+  `t` the time since record 1, the record before is `count0 = INT((t+0.5)/period) + 1`,
+  the record after is `count0 + 1`, and the weight of `count0` is
+  `1 - MOD(t,period)/period` (line 149). The field is interpolated linearly between the
+  two records (`exf_set_fld.F`, lines 299-314). A time before record 1 stops the run.
+- *Repeat cycle* (`exf_getffieldrec.F`, lines 134-146). When `runoffRepCycle` is
+  positive, `t` is taken modulo the cycle, so the record after the last one is
+  record 1. `runoffRepCycle` defaults to `repeatPeriod` (`exf_readparms.F`, line 951),
+  which `input/data.exf` sets to 31622400 s. `input.rnof_daily` therefore sets
+  `runoffRepCycle = 0.` to read its records without repeating, and `input.rnof_clim`
+  sets a cycle of 365 days with a period of one twelfth of it.
+- *Repeating monthly climatology* (`exf_set_fld.F`, lines 133-140).
+  `runoffperiod = -12.` means the file holds 12 records, January to December, which
+  `cal_GetMonthsRec` places at the middle of each calendar month and repeats every year
+  (`pkg/cal/cal_getmonthsrec.F`, lines 106-117 and 134-213). Between two mid-month
+  times the field is interpolated linearly. The start date and the repeat cycle are
+  not used.
+- *Calendar months without repetition* (`exf_set_fld.F`, lines 142-153).
+  `runoffperiod = -1.` uses the same mid-month times and interpolation, but the file
+  holds one record per consecutive calendar month. Without yearly files, record 1 is
+  the month in which the runoff start date falls, and the record of year `y`, month `m`
+  is `(y - yy)*12 + m - mm + 1`, with `yy` and `mm` the year and month of the start
+  date (`exf_getmonthsrec.F`, lines 58-69). A run that starts before the middle of a
+  month needs the record of the month before, which is why `input.rnof_month1` starts
+  its records in December 1978. Any other negative period stops the run
+  (`exf_set_fld.F`, lines 154-160).
+- *Yearly files* (`exf_getffieldrec.F`, lines 152-190). `useExfYearlyFields = .TRUE.`
+  applies to every `pkg/exf` field. Records are counted within each year from the
+  start date's offset, and when the record after `count0` falls beyond the end of the year it is
+  record 1 of the next year's file. The file name is the given name followed by `_YYYY`
+  (`exf_getyearlyfieldname.F`, lines 46-55). Yearly files cannot be combined with a
+  non-zero `repeatPeriod` (`exf_check.F`, lines 71-84). `input.rnof_yearly/data.exf`
+  therefore follows `input/data.exf_YearlyFields` for the other fields (record 1 at
+  16 January 18:00, no repeat period), and its `prepare_run` links the climatological
+  forcing files `<name>.labsea1979` as `<name>.labsea_1978` and `<name>.labsea_1979`.
+  The atmospheric forcing of this test thus differs slightly from that of `input/`.
+
+The reference outputs are `results/output.rnof_<X>.txt`. In each test the runoff
+statistics printed by the monitor (`exf_runoff_max`, `_min`, `_mean` and `_sd`) equal,
+to 1e-12 relative, those of the field interpolated from the input records under the
+conventions above, at every monitor time.
+
 ### Instruction to run secondary tests
 Run the testscript _forward_ experiments:
 

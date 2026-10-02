@@ -1,0 +1,24 @@
+#! /usr/bin/env bash
+
+#- useExfYearlyFields applies to every exf field, so each forcing file is
+#  read as <name>_YYYY. The lab_sea forcing is a monthly climatology: link
+#  it under the names of the two years this run spans.
+#  (the runoff files runoff_yearly_1978 and runoff_yearly_1979 are in this
+#  directory)
+
+lnkList='files:'
+for xx in tair qa u10m v10m prate flo fsh SSS_monthly
+do
+  for yr in 1978 1979
+  do
+    if test -r ${xx}.labsea1979 ; then
+      if test ! -r ${xx}.labsea_${yr} ; then
+        lnkList=${lnkList}" "${xx}.labsea_${yr}
+        ln -sf ${xx}.labsea1979 ${xx}.labsea_${yr}
+      fi
+    else
+      echo " Error: missing" ${xx}.labsea1979
+    fi
+  done
+done
+echo ' link' $lnkList
