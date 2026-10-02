@@ -15,12 +15,24 @@ Library use::
 Command line::
 
     python -m MITgcmutils.runoff.check FILE [FILE ...] [--grid-dir DIR]
-                                       [--strict] [--json OUT]
+                                       [--strict] [--json OUT] [--tables-only]
 
 Exit status: 0 no errors, 1 errors (or warnings with ``--strict``), 2 usage
 or I/O problem (unreadable file, missing grid file, unwritable JSON).
 
 Implementation notes that the schema leaves to the checker:
+
+* Tables-only mode (``tables_only=True``, ``--tables-only``) checks a file
+  that holds only the source, alias and target tables, such as the output of
+  :mod:`MITgcmutils.runoff.targets` before its time series are added. It does
+  not require the ``time`` dimension (S03) or the ``time`` and ``runoff_flux``
+  variables (S04), and it skips the time and time-series rules M01-M06,
+  D01-D09 and P01 entirely, even for time variables that are present. With
+  several files it also skips the X01 time order and continuity checks; the
+  X01 table comparison still runs. Every other rule runs unchanged. One
+  ``S10`` (I) finding per file lists what was skipped
+  (:data:`schema.TABLES_ONLY_SKIPPED`), and ``Report.stats["tables_only"]``
+  records the same list.
 
 * All variables are read with ``set_auto_maskandscale(False)`` and
   ``set_auto_chartostring(False)``: netCDF4 neither masks nor unpacks, so the
@@ -522,10 +534,11 @@ class _TimeAxis:
 class _FileContext:
     """Per-file state shared by the rule groups, and the finding collector."""
 
-    def __init__(self, path, ds, report):
+    def __init__(self, path, ds, report, tables_only=False):
         self.path = str(path)
         self.ds = ds
         self.report = report
+        self.tables_only = tables_only   # time and time-series rules skipped
         self.counts = {}
         self.ok = {}             # variable -> passed its structural check
         self.ids = None          # decoded source ids, when readable
@@ -640,9 +653,13 @@ def _check_structure(ctx):
     missing-value attributes of their own type on model-read variables (S09),
     allowed HDF5 filters on model-read variables (P02) and the grid size
     attributes (G01). Also records ``ctx.bad_filters`` for the P02 read guard
-    in :func:`_check_timeseries`.
+    in :func:`_check_timeseries`. In tables-only mode the ``time`` dimension
+    (S03) and the ``time`` and ``runoff_flux`` variables (S04) are not
+    required; the form of those present is still checked (S04).
     """
     ds = ctx.ds
+    # Tables-only mode: the time axis and time series are not required.
+    optional = (S.DIM_TIME, "time") + S.REQUIRED_TIMESERIES if ctx.tables_only else ()
     # S01
     if ds.data_model not in S.NETCDF_FORMATS:
         ctx.add("S01", "file format is {0}; schema {1} requires {2}".format(
@@ -666,6 +683,8 @@ def _check_structure(ctx):
 
     # S03
     for d in S.REQUIRED_DIMS:
+        if d in optional:
+            continue
         if d not in ds.dimensions:
             ctx.add("S03", "required dimension '{0}' is missing".format(d))
         elif len(ds.dimensions[d]) == 0:
@@ -688,7 +707,8 @@ def _check_structure(ctx):
 
     # S04: static-table variables (time series: presence here, form in D01)
     for name, (dims, cls, req) in S.TABLE_VARIABLES.items():
-        required = req is True or (isinstance(req, str) and req in ds.dimensions)
+        required = (req is True or (isinstance(req, str) and req in ds.dimensions)) \
+            and name not in optional
         if name not in ds.variables:
             ctx.ok[name] = False
             if required:
@@ -707,7 +727,7 @@ def _check_structure(ctx):
             ctx.add("S04", "has dimensions ({0}) and type {1}; expected {2}".format(
                 ", ".join(var.dimensions), _describe_type(var), want), variable=name)
     for name in S.REQUIRED_TIMESERIES:
-        if name not in ds.variables:
+        if name not in ds.variables and name not in optional:
             ctx.add("S04", "required variable '{0}' is missing".format(name))
 
     # S05
@@ -1727,11 +1747,27 @@ def _check_yearly_offsets(report, snaps):
                         cur["path"], "time")
 
 
+def _check_tables_only(ctx, multi):
+    """S10: say which rules tables-only mode skipped in this file.
+
+    The skipped rules are :data:`schema.TABLES_ONLY_SKIPPED`, plus
+    :data:`schema.TABLES_ONLY_SKIPPED_MULTI` when several files are checked
+    together (``multi``). Returns that list, which :func:`check_files` also
+    stores in ``Report.stats["tables_only"]``.
+    """
+    skipped = list(S.TABLES_ONLY_SKIPPED) + (list(S.TABLES_ONLY_SKIPPED_MULTI)
+                                             if multi else [])
+    ctx.add("S10", "tables-only check: the time axis and time series are not "
+            "required, and these rules were not checked: " + "; ".join(skipped))
+    return skipped
+
+
 # ---------------------------------------------------------------------------
 # Entry points
 
 
-def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES):
+def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES,
+                tables_only=False):
     """Check one runoff file, or several files of one data set, against schema 1.0.
 
     Parameters
@@ -1744,6 +1780,12 @@ def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES):
         global or tiled ``.meta/.data``); enables R01-R03.
     max_block_bytes : int
         Upper bound on the bytes of one block of time-series records read at once.
+    tables_only : bool
+        Check only the source, alias and target tables and the global
+        attributes, for a file without a time axis or time series (for
+        example the output of :func:`MITgcmutils.runoff.targets.write_targets`).
+        The time and time-series rules are skipped and each file gets one
+        ``S10`` (I) finding listing them (see the module notes).
 
     Returns
     -------
@@ -1770,14 +1812,17 @@ def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES):
         try:
             ds.set_auto_maskandscale(False)   # stored values: no masking, no unpacking
             ds.set_auto_chartostring(False)
-            ctx = _FileContext(path, ds, report)
+            ctx = _FileContext(path, ds, report, tables_only=tables_only)
             _check_structure(ctx)
             _check_attr_types(ctx)
             _check_sources(ctx)
             _check_aliases(ctx)
             _check_targets(ctx)
-            _check_time(ctx)
-            _check_timeseries(ctx, max_block_bytes)
+            if tables_only:
+                report.stats["tables_only"] = _check_tables_only(ctx, multi)
+            else:
+                _check_time(ctx)
+                _check_timeseries(ctx, max_block_bytes)
             _check_units(ctx)
             if grid is not None:
                 _check_grid(ctx, grid)
@@ -1793,7 +1838,7 @@ def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES):
                     snaps.append(snap)
         finally:
             ds.close()
-    if multi:
+    if multi and not tables_only:
         _check_order(report, snaps)
     return report
 
@@ -1811,12 +1856,17 @@ def main(argv=None):
                         help="MITgcm grid output (hFacC, RAC, XC, YC) for R01-R03")
     parser.add_argument("--strict", action="store_true", help="fail on warnings too")
     parser.add_argument("--json", metavar="OUT", help="write the report as JSON")
+    parser.add_argument("--tables-only", action="store_true",
+                        help="check only the source, alias and target tables (a file "
+                             "without time series); time and time-series rules are "
+                             "skipped and listed in an S10 finding")
     try:
         args = parser.parse_args(argv)
     except SystemExit as e:  # usage error (2) or --help (0)
         return int(e.code or 0)
     try:
-        report = check_files(args.files, grid_dir=args.grid_dir)
+        report = check_files(args.files, grid_dir=args.grid_dir,
+                             tables_only=args.tables_only)
     except OSError as e:
         print("error: {0}".format(e), file=sys.stderr)
         return 2

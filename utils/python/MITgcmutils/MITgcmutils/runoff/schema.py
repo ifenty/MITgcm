@@ -232,10 +232,22 @@ RECOMMENDED_GLOBAL_ATTRS = (
     "geospatial_lon_min", "geospatial_lon_max",
 )
 
+#: Tables-only checking (``check_files(..., tables_only=True)``, section 9): a
+#: file holding only the source, alias and target tables, such as the output of
+#: :mod:`MITgcmutils.runoff.targets`, has no time axis or time series. These
+#: rules, or parts of rules, are then not checked, and ``S10`` (I) says so.
+TABLES_ONLY_SKIPPED = (
+    "S03 (the time dimension requirement)",
+    "S04 (the time and runoff_flux requirements)",
+    "M01-M06", "D01-D09", "P01",
+)
+#: Also skipped when several files are checked together in tables-only mode.
+TABLES_ONLY_SKIPPED_MULTI = ("X01 (time order and continuity across files)",)
+
 #: Rule id -> level, for every rule of schema section 9.
 RULES = {
     "S01": "E", "S02": "E", "S03": "E", "S04": "E", "S05": "E", "S06": "I",
-    "S07": "E", "S08": "E", "S09": "E",
+    "S07": "E", "S08": "E", "S09": "E", "S10": "I",
     "G01": "E",
     "I01": "E", "I02": "E", "I03": "W", "I04": "W",
     "A01": "E", "A02": "W",
