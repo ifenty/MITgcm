@@ -532,7 +532,11 @@ class _TimeAxis:
 
 
 class _FileContext:
-    """Per-file state shared by the rule groups, and the finding collector."""
+    """Per-file state shared by the rule groups, and the finding collector.
+
+    ``tables_only`` (set by :func:`check_files`) tells the rule groups that the
+    time axis and time series are not required in this file.
+    """
 
     def __init__(self, path, ds, report, tables_only=False):
         self.path = str(path)

@@ -92,18 +92,31 @@ Implementation notes
     when the four points are a quadrilateral centered on the cell center
     (rotating the SW corner by 180 degrees about the center gives the NE
     corner, and the SE corner gives the NW, both within :data:`CORNER_TOL`
-    of the shortest side). Otherwise, at face edges, the corners are found
-    geometrically among all SW corners: the NE corner is the vertex nearest
-    the 180-degree rotation of the SW corner; one of the other two is the
-    nearest vertex to the center that is neither of those, and its
-    180-degree rotation locates the last. A corner with no vertex within
-    :data:`CORNER_TOL` of its prediction is not the SW corner of any cell
-    (a cube corner, or the far side of an open boundary) and gets a
-    synthesized position. Edges between two vertex ids are matched exactly;
-    an edge from a vertex to a synthesized corner is matched with the other
-    cell having the same vertex and a synthesized corner within
-    :data:`SYNTH_MERGE_TOL` of the shortest side. An edge shared by more
-    than two cells is an error. ``auto`` chooses ``corners`` when any array
+    of the shortest side). Otherwise (at face edges, beside blank tiles and
+    at open boundaries) the corners are found geometrically among the SW
+    corners of all valid cells. The NE corner is the vertex nearest the
+    180-degree rotation of the SW corner about the center. The SE or NW
+    corner is the vertex nearest the center that lies between the SW corner
+    and that rotation (measured along the diagonal) and forms, with the SW
+    corner and the center, a triangle of about a quarter of the cell area
+    (:data:`CORNER_AREA_RANGE`); this rejects the corners of neighbouring
+    cells. Its 180-degree rotation locates the last corner. A corner with
+    no vertex within :data:`CORNER_TOL` of its prediction is no valid
+    cell's SW corner (a cube corner, a vertex owned by a blank tile, or the
+    far side of an open boundary) and gets a synthesized position. When
+    neither the SE nor the NW corner is a vertex (blank tiles, or an open
+    boundary, on two adjacent sides), both are synthesized: the SW corners
+    of the south and west neighbours, rotated by 180 degrees about the
+    cell's own SW corner, give its NW and SE corners, and the vertices
+    beyond a stored NE corner are used likewise. Edges between two vertex
+    ids are matched exactly. Edges from a vertex to a synthesized corner are
+    matched in pairs at that vertex, closest synthesized corners first,
+    within :data:`SYNTH_MERGE_TOL` of the shortest side, and never two
+    edges of one cell. An edge between two synthesized corners is not
+    matched; on the cubed sphere every edge between two cells is the west
+    or south edge of one of them, so it has that cell's SW corner as a
+    vertex. An edge shared by more than two cells is an error. ``auto``
+    chooses ``corners`` when any array
     neighbour's SW corner is more than :data:`MOSAIC_RATIO` times as far from
     a cell's center as its own SW corner.
 
@@ -115,7 +128,15 @@ Implementation notes
   shortest side from the nearest stored vertex, and the three predictions of
   one cube corner are 0.61 apart. Applied to all 5766 cells whose array
   neighbours lie on the same face, the geometric search
-  (:func:`_geometric_corners`) finds the same four corners as the array. The
+  (:func:`_geometric_corners`) finds the same four corners as the array;
+  their true SE and NW corners lie at 0.79-1.09 along the diagonal (bounds
+  0 and 2) with triangle ratios 0.79-1.10 (:data:`CORNER_AREA_RANGE`). With
+  blank tiles simulated on cs32 (every grid field 0 on 8 x 8 tiles: one
+  side, two adjacent sides, all four sides of a tile, across a cube corner,
+  with and without land beside them; and all 348 all-land 2 x 2 tiles of the
+  real mask), the graph equals the all-wet graph restricted to the wet
+  cells. On open lat-lon grids at 55N-63N with cell aspect ratios from
+  about 1/8 to 2, the ``corners`` method gives the ``index`` neighbours. The
   ``corners`` method assumes cells that are close to parallelograms around
   their centers; no LLC grid was available to test it.
 * **Search:** nearest-cell and nearest-vertex searches use
@@ -169,6 +190,12 @@ CONNECTIVITIES = ("auto", "index", "corners")
 #: Neighbour-graph tolerances (module notes). Corner predictions must be
 #: within CORNER_TOL of the cell's shortest side of a vertex.
 CORNER_TOL = 0.5
+#: A vertex is a cell's SE or NW corner only when the area of the triangle
+#: (SW corner, vertex, center), in units of a quarter of the cell area, is in
+#: this range. It is 1 for a parallelogram's own corners, and 0 or 2 for the
+#: nearby corners of neighbouring cells that lie between the same bounds
+#: along the diagonal.
+CORNER_AREA_RANGE = (0.5, 1.5)
 #: Two synthesized predictions of one corner are at most this far apart, in
 #: units of the shorter of the two cells' shortest sides.
 SYNTH_MERGE_TOL = 1.0
@@ -813,13 +840,23 @@ def _geometric_corners(geom, vid, cells):
 
     Returns ``(ids, synth, scale)``. ``ids`` is ``(len(cells), 4)`` in cyclic
     order: SW, one of SE/NW, NE, the other of SE/NW. A corner that is no
-    cell's SW corner has id -1 and its predicted unit vector in
+    valid cell's SW corner has id -1 and its predicted unit vector in
     ``synth[(row, slot)]``. ``scale`` is each cell's estimated shortest side
     (unit sphere), from its SW-NE diagonal and area as for a rectangle.
+
+    A vertex is accepted as the SE or NW corner only when it lies between the
+    SW corner and its 180-degree rotation about the center (measured along
+    that diagonal) and the triangle (SW, vertex, center) has about a quarter
+    of the cell area (:data:`CORNER_AREA_RANGE`); the nearest such vertex to
+    the center is taken, and its rotation about the center locates the other.
+    This rejects the corners of neighbouring cells. When no vertex qualifies,
+    neither corner is a valid cell's SW corner (blank tiles, or an open
+    boundary, on two adjacent sides) and :func:`_predicted_pair` places both.
     """
     P, G = geom.centers, geom.corners
     valid_cells = np.nonzero(geom.valid)[0]
-    index = _PointIndex(G[valid_cells])
+    verts = G[valid_cells]
+    index = _PointIndex(verts)
     rows = np.arange(len(cells))
     pr, sr = P[cells], G[cells]
     ne_pred = _reflect(pr, sr)
@@ -833,25 +870,72 @@ def _geometric_corners(geom, vid, cells):
     ne_id = np.where(ne_ok, vid[valid_cells[k_ne[:, 0]]], -1)
     d_c, k_c = index.query(pr, 8)
     cand = vid[valid_cells[k_c]]
-    usable = (cand != own[:, None]) & (cand != ne_id[:, None])
-    if not usable.any(axis=1).all():
-        bad = cells[~usable.any(axis=1)][0]
-        raise BuildError("grid: can't find the corners of {0}".format(geom.describe(bad)))
+    half = (pr - sr)[:, None, :]                       # SW corner to center
+    off = verts[k_c] - sr[:, None, :]                  # SW corner to candidate
+    along = np.sum(off * half, axis=2) / np.sum(half * half, axis=2)
+    quarter = 2.0 * _norm(np.cross(off, half)) / area[:, None]
+    usable = ((cand != own[:, None]) & (cand != ne_id[:, None]) & (along > 0) & (along < 2)
+              & (quarter >= CORNER_AREA_RANGE[0]) & (quarter <= CORNER_AREA_RANGE[1]))
+    has = usable.any(axis=1)
     first = np.argmax(usable, axis=1)
-    u_cell = valid_cells[k_c[rows, first]]
-    u_id = cand[rows, first]
-    w_pred = _reflect(pr, G[u_cell])
+    u_id = np.where(has, cand[rows, first], -1)
+    w_pred = _reflect(pr, verts[k_c[rows, first]])
     d_w, k_w = index.query(w_pred, 1)
     w_id = vid[valid_cells[k_w[:, 0]]]
-    w_ok = ((d_w[:, 0] <= CORNER_TOL * m_est) & (w_id != own) & (w_id != ne_id)
+    w_ok = (has & (d_w[:, 0] <= CORNER_TOL * m_est) & (w_id != own) & (w_id != ne_id)
             & (w_id != u_id))
     ids = np.stack([own, u_id, np.where(ne_ok, ne_id, -1), np.where(w_ok, w_id, -1)], axis=1)
     synth = {}
     for r in np.nonzero(~ne_ok)[0].tolist():
         synth[(r, 2)] = ne_pred[r]
-    for r in np.nonzero(~w_ok)[0].tolist():
+    for r in np.nonzero(has & ~w_ok)[0].tolist():
         synth[(r, 3)] = w_pred[r]
+    for r in np.nonzero(~has)[0].tolist():
+        ne = verts[k_ne[r, 0]] if ne_ok[r] else None
+        synth[(r, 1)], synth[(r, 3)] = _predicted_pair(index, verts, pr[r], sr[r], area[r], ne)
     return ids, synth, m_est
+
+
+def _predicted_pair(index, verts, p, sw, area, ne):
+    """Predicted unit vectors of a cell's SE and NW corners when neither is a
+    valid cell's SW corner, one on each side of the SW-NE diagonal.
+
+    ``p`` is the center, ``sw`` the SW corner, ``ne`` the NE corner when it is
+    a stored vertex (else None) and ``area`` the unit-sphere cell area. The
+    stored vertices next to ``sw`` on the far side from the center are the SW
+    corners of the south and west neighbours; rotating one by 180 degrees
+    about ``sw`` gives the NW or SE corner (the grid lines continue through
+    ``sw``). The vertices beyond a stored ``ne`` are used in the same way. A
+    side with no such vertex has no neighbour across the edges that end at
+    that corner, so only its position relative to the other matters: it is
+    the other corner rotated about the center, or, with no neighbour vertex
+    at all, the SW corner rotated by 90 degrees about the center.
+    """
+    half = p - sw
+
+    def side(x):
+        return 1 if np.dot(np.cross(x - sw, half), p) > 0 else -1
+
+    found = {}
+    for anchor in (sw, ne):
+        if anchor is None:
+            continue
+        inward = p - anchor
+        _, k = index.query(anchor, 12)
+        for v in verts[k[0]]:
+            off = v - anchor
+            quarter = 2.0 * _norm(np.cross(off, inward)) / area
+            if (np.dot(off, inward) < 0
+                    and CORNER_AREA_RANGE[0] <= quarter <= CORNER_AREA_RANGE[1]):
+                x = _reflect(anchor, v)
+                found.setdefault(side(x), x)          # nearest to the anchor first
+    if not found:
+        x = p * np.dot(p, sw) + np.cross(p, sw)       # sw rotated 90 degrees about p
+        found[side(x)] = x
+    for sgn in (1, -1):
+        if sgn not in found:
+            found[sgn] = _reflect(p, found[-sgn])
+    return found[1], found[-1]
 
 
 def _corner_pairs(geom):
@@ -918,14 +1002,18 @@ def _corner_pairs(geom):
     matched = unmatched = 0
     extra = []
     for vert, items in half.items():
+        # A cell can have two such edges at one vertex (both its SE and NW corners
+        # synthesized), so edges are matched one by one, closest first, never two
+        # edges of the same cell.
         used = set()
         cand = sorted(
-            (_norm(pa - pb) / min(scale[na], scale[nb]), na, nb)
-            for x, (na, pa) in enumerate(items) for (nb, pb) in items[x + 1:])
-        for sep, na, nb in cand:
-            if sep <= SYNTH_MERGE_TOL and na not in used and nb not in used:
-                used.update((na, nb))
-                extra.append((na, nb))
+            (_norm(pa - pb) / min(scale[na], scale[nb]), x, y)
+            for x, (na, pa) in enumerate(items)
+            for y, (nb, pb) in enumerate(items[x + 1:], x + 1) if na != nb)
+        for sep, x, y in cand:
+            if sep <= SYNTH_MERGE_TOL and x not in used and y not in used:
+                used.update((x, y))
+                extra.append((items[x][0], items[y][0]))
                 matched += 1
         unmatched += len(items) - len(used)
     if extra:
