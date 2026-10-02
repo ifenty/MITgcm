@@ -195,17 +195,24 @@ start date changes, the runoff file or files, and the script `gendata.py` that w
 | Test | Runoff timing | `data.exf` settings | Run (first step to last step) |
 | --- | --- | --- | --- |
 | `input.rnof_const` | one constant field | `runoffperiod = 0.` | 48 steps, 1979-01-01 01:00 to 1979-01-03 00:00 |
-| `input.rnof_daily` | daily records, not repeated | `runoffstartdate1 = 19790101`, `runoffstartdate2 = 000000`, `runoffperiod = 86400.`, `runoffRepCycle = 0.` | 768 steps (32 days), 1979-01-01 to 1979-02-02; reads records 1 to 33 |
-| `input.rnof_month` | repeating monthly climatology: 12 calendar-month records, January to December, repeated every year | `runoffperiod = -12.` | 1464 steps (61 days), 1979-01-01 to 1979-03-03; uses records 12, 1, 2 and 3 |
-| `input.rnof_month1` | calendar-month records, not repeated; record 1 is December 1978 | `runoffstartdate1 = 19781201`, `runoffstartdate2 = 000000`, `runoffperiod = -1.` | 1464 steps (61 days), 1979-01-01 to 1979-03-03; uses records 1 (December 1978) to 4 (March 1979) |
-| `input.rnof_clim` | 12 equally spaced records with a repeat cycle | `runoffstartdate1 = 19780116`, `runoffstartdate2 = 120000`, `runoffperiod = 2628000.`, `runoffRepCycle = 31536000.` | 1200 steps (50 days), 1978-12-01 to 1979-01-20; uses records 11, 12, 1 and 2 |
-| `input.rnof_yearly` | daily records in yearly files `runoff_yearly_YYYY` | `useExfYearlyFields = .TRUE.`, `runoffstartdate1 = 19780101`, `runoffstartdate2 = 000000`, `runoffperiod = 86400.` | 624 steps (26 days), 1978-12-20 to 1979-01-15; reads `runoff_yearly_1978` and `runoff_yearly_1979` |
+| `input.rnof_daily` | daily records, not repeated | `runoffstartdate1 = 19790101`, `runoffstartdate2 = 000000`, `runoffperiod = 86400.`, `runoffRepCycle = 0.` | 768 steps (32 days), 1979-01-01 to 1979-02-02; reads records 1 to 34, of which 1 to 33 get non-zero weight (record 34 is held with weight 0 at the last forcing time, 1979-02-02 00:00) |
+| `input.rnof_month` | repeating monthly climatology: 12 calendar-month records, January to December, repeated every year | `runoffperiod = -12.` | 1464 steps (61 days), 1979-01-01 to 1979-03-03; reads records 12, 1, 2 and 3, all with non-zero weight |
+| `input.rnof_month1` | calendar-month records, not repeated; record 1 is December 1978 | `runoffstartdate1 = 19781201`, `runoffstartdate2 = 000000`, `runoffperiod = -1.` | 1464 steps (61 days), 1979-01-01 to 1979-03-03; reads records 1 (December 1978) to 4 (March 1979), all with non-zero weight |
+| `input.rnof_clim` | 12 equally spaced records with a repeat cycle | `runoffstartdate1 = 19780116`, `runoffstartdate2 = 120000`, `runoffperiod = 2628000.`, `runoffRepCycle = 31536000.` | 1200 steps (50 days), 1978-12-01 to 1979-01-20; reads records 11, 12, 1 and 2, all with non-zero weight |
+| `input.rnof_yearly` | daily records in yearly files `runoff_yearly_YYYY` | `useExfYearlyFields = .TRUE.`, `runoffstartdate1 = 19780101`, `runoffstartdate2 = 000000`, `runoffperiod = 86400.` | 624 steps (26 days), 1978-12-20 to 1979-01-15; reads records 354 to 365 of `runoff_yearly_1978` and 1 to 16 of `runoff_yearly_1979`, of which 354 to 365 and 1 to 15 get non-zero weight (record 16 of 1979 is held with weight 0 at the last forcing time, 1979-01-15 00:00) |
 
 The time step is 3600 s. `startDate_1` in `data.cal` is the date at model time 0
 (`pkg/cal/cal_set.F`, lines 235-237), and the runs start at `startTime = 3600.`, so the
-first step is at 01:00 on the start date. The five long tests print the monitor once a
-day (`monitorFreq = 86400.`) and write no pickups (`pChkptFreq = 0.`); nothing else in
-`data` differs from `input/data` apart from `endTime`.
+first step is at 01:00 on the start date. Forcing is evaluated at the start of each
+step, so the last forcing time is `endTime - deltaT` (00:00 on the last day above).
+`pkg/exf` always holds the record after the current time, and reads it even when the
+time falls exactly on a record and that later record has weight 0. The five long
+tests write no pickups (`pChkptFreq = 0.`) and print the monitor every 12 h in
+`input.rnof_daily` and `input.rnof_yearly` (`monitorFreq = 43200.`, so the monitor
+samples times where the interpolation weight is 0.5, including the year-wrap
+interval between 31 December 1978 and 1 January 1979), and once a day in the other
+three (`monitorFreq = 86400.`); nothing else in `data` differs from `input/data` apart
+from `endTime`.
 
 **Runoff sources.** Runoff is in m/s and is zero except at seven coastal cells (wet cells
 with a land neighbour in `bathy.labsea1979`), listed in `runoff_sources.txt` with their
