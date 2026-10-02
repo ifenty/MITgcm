@@ -90,10 +90,17 @@ Implementation notes
     wrap only in its own rows. The declaration is checked
     (:func:`_latlon_problem`): over the valid cells (``RAC > 0``) ``XC`` and
     ``XG`` must depend only on ``i`` and ``YC`` and ``YG`` only on ``j``
-    (within :data:`LATLON_TOL` degrees), and consecutive columns and rows
-    that hold valid cells must share an edge. A grid that fails is an error
-    naming the violation; lat-lon facets stacked in the array fail one test
-    or the other.
+    (within :data:`LATLON_TOL` degrees). Over all columns that hold a valid
+    cell ``XG`` must be one increasing function of ``i``, and ``YG`` of
+    ``j`` over all such rows: neighbouring columns share an edge, columns
+    separated by blank columns leave room for them
+    (:data:`LATLON_GAP_RANGE`), and the valid columns, with any blank
+    columns at the array ends, fit within 360 degrees. Then every two valid
+    cells that share an edge are array neighbours or the end cells of a
+    closing row, so the graph is exact. A grid that fails is an error naming
+    the violation. Lat-lon facets stacked in the array restart ``XG`` or
+    ``YG`` and are refused, also when blank columns or rows separate their
+    valid parts.
   - ``exch2``, for exch2 global I/O layouts (cubed sphere, LLC), whose
     array neighbours at face or tile boundaries are not grid neighbours, and
     for any other grid that is not a regular lat-lon block (it gives the
@@ -141,8 +148,17 @@ Implementation notes
   a grid that is not a regular lat-lon block is refused, and ``exch2``
   stops on corners it cannot match consistently (an edge shared by more
   than two cells, or a cell with more than four neighbours). ``exch2``
-  declared on a lat-lon grid gives the same neighbours as ``latlon`` on the
-  grids tested (below).
+  also stops, naming the cell and pointing to ``latlon``, when a wet cell
+  has a zero-length edge (:func:`_degenerate_edge`): its SW corner is also
+  the SW corner of an array neighbour, two of its corners are the same
+  vertex, or the edge opposite its SW corner collapses onto a geographic
+  pole. That is the case of a wet row of a lat-lon grid touching a pole,
+  whose links the corner method would lose; so a lat-lon run that uses
+  pkg/exch2 (and has ``data.exch2``) should declare ``latlon``. A collapsed
+  edge that is not at a geographic pole (the pole of a rotated grid) is
+  seen only on a cell's south or west side. ``exch2`` declared on a
+  lat-lon grid whose wet cells do not touch a pole gives the same
+  neighbours as ``latlon`` on the grids tested (below).
 
   On the ``global_ocean.cs32x15`` grid with every cell treated as wet, the
   ``exch2`` method gives every cell 4 neighbours: 12288 edges, 384 of them
@@ -162,7 +178,10 @@ Implementation notes
   cells. That includes eight blank 8 x 8 tiles that hide every mismatched
   array seam of cs32, where index neighbours would lose 192 cross-face
   edges. On two lat-lon facets stacked in the array, with and without blank
-  tiles, ``exch2`` finds the facet seam links and ``latlon`` is refused. On
+  tiles (also with blank columns and rows between their valid parts),
+  ``exch2`` finds the facet seam links and ``latlon`` is refused. On
+  pole-to-pole and 60N-90N lat-lon grids with a wet polar row ``latlon`` is
+  exact and ``exch2`` is refused; with the polar rows dry both agree. On
   lat-lon grids (periodic with blank tiles at the end columns; open at
   55N-63N with cell aspect ratios from about 1/8 to 2) ``exch2`` gives the
   ``latlon`` neighbours, and on a lat-lon block rotated over the North Pole
@@ -237,6 +256,15 @@ LATLON_TOL = 1e-6
 #: degrees, within this fraction of the cell width. It allows for grid files
 #: written in single precision.
 LATLON_EDGE_TOL = 0.01
+#: ``latlon``: across a run of blank columns (rows), the mean width left for
+#: them is between the smaller of the two widths beside the gap times the
+#: first value and the larger times the second. The lower bound, being
+#: positive, is what guarantees that cells separated by blank columns do not
+#: touch; the range allows for stretched grids.
+LATLON_GAP_RANGE = (0.25, 4.0)
+#: ``exch2``: a cell's far edge is taken to collapse onto a geographic pole
+#: when ``2 YC - YG`` is within this many degrees of +-90.
+POLE_TOL = 1e-4
 #: SW corners whose unit vectors round to the same multiples of this (about
 #: 6 mm on the Earth) are one vertex.
 VERTEX_EPS = 1e-9
@@ -811,14 +839,28 @@ def _latlon_problem(geom):
     """None when the valid cells (``RAC > 0``) form one regular lat-lon block,
     else a sentence naming the first violation.
 
-    Regular means: ``XC`` and ``XG`` depend only on ``i`` and ``YC`` and
-    ``YG`` only on ``j`` (within :data:`LATLON_TOL` degrees); each center lies
-    east and north of its SW corner; and consecutive columns, and consecutive
-    rows, that hold valid cells share an edge: the east edge ``2 XC - XG`` of
-    column ``i`` is ``XG`` of column ``i+1``, and likewise in latitude (within
-    :data:`LATLON_EDGE_TOL` of the cell width). The last test rejects lat-lon
-    facets stacked in the array whose valid cells happen to lie in separate
-    columns or rows.
+    Regular means:
+
+    * ``XC`` and ``XG`` depend only on ``i`` and ``YC`` and ``YG`` only on
+      ``j`` (within :data:`LATLON_TOL` degrees), and each center lies east and
+      north of its SW corner.
+    * Over all columns that hold a valid cell, ``XG`` is one increasing
+      function of ``i`` (a single drop of 360 degrees in the stored values is
+      allowed), and likewise ``YG`` of ``j`` over all such rows. Two
+      neighbouring columns share an edge: the east edge ``2 XC - XG`` of
+      column ``i`` is ``XG`` of column ``i+1`` (within
+      :data:`LATLON_EDGE_TOL` of the cell width). Two columns separated by
+      blank columns leave room for them: the distance from the east edge of
+      one to ``XG`` of the next is the number of blank columns times a width
+      within :data:`LATLON_GAP_RANGE` of the two widths beside the gap.
+    * The columns with valid cells, together with any blank columns at the
+      ends of the array, fit within 360 degrees.
+
+    Then every two valid cells that share an edge on the sphere are array
+    neighbours, or the end cells of a row that closes 360 degrees, so
+    :func:`_latlon_pairs` is exact. Lat-lon facets stacked in the array
+    restart ``XG`` or ``YG`` and are refused, also when blank columns or rows
+    separate their valid parts.
     """
     ny, nx = geom.ny, geom.nx
     valid = geom.valid.reshape(ny, nx)
@@ -835,23 +877,42 @@ def _latlon_problem(geom):
             return "{0} varies from {1:.9g} to {2:.9g} degrees along {3} = {4}".format(
                 name, lo[k], hi[k], what, k)
         line[name] = (np.where(some, lo, 0.0), some)      # lines with no valid cell: unused
-    for cname, gname, what, wrap in (("XC", "XG", "column i", True), ("YC", "YG", "row j", False)):
+    for cname, gname, what, zonal, n in (("XC", "XG", "column i", True, nx),
+                                         ("YC", "YG", "row j", False, ny)):
         (c, some), g = line[cname], line[gname][0]
-        width = 2.0 * (c - g)
-        bad = some & ~(np.where(some, width, 1.0) > 0)
+        idx = np.nonzero(some)[0]                 # every column (row) holding a valid cell
+        g, width = g[idx], 2.0 * (c - g)[idx]
+        if not (width > 0).all():
+            return "{0} is not greater than {1} in {2} = {3}".format(
+                cname, gname, what, idx[int(np.argmin(width > 0))])
+        missing = np.diff(idx) - 1                # blank columns (rows) between two valid ones
+        gap = g[1:] - (g[:-1] + width[:-1])       # from one's far edge to the next one's near edge
+        if zonal:
+            gap = np.where(gap < -180.0, gap + 360.0, gap)      # XG stored modulo 360
+        small, large = np.minimum(width[:-1], width[1:]), np.maximum(width[:-1], width[1:])
+        tol = LATLON_EDGE_TOL * small
+        bad = ((gap < missing * small * LATLON_GAP_RANGE[0] - tol)
+               | (gap > missing * large * LATLON_GAP_RANGE[1] + tol))
         if bad.any():
             k = int(np.argmax(bad))
-            return "{0} is not greater than {1} in {2} = {3}".format(cname, gname, what, k)
-        pair = some[:-1] & some[1:]
-        gap = np.where(pair, g[1:] - (g[:-1] + width[:-1]), 0.0)
-        if wrap:
-            gap = (gap + 180.0) % 360.0 - 180.0
-        bad = pair & (np.abs(gap) > LATLON_EDGE_TOL * np.where(pair, width[:-1], 1.0))
-        if bad.any():
-            k = int(np.argmax(bad))
-            return ("{0} = {1} ends at {2:.9g} degrees ({3}), but {0} = {4} starts at {5:.9g} "
-                    "({6})".format(what, k, g[k] + width[k], "2 {0} - {1}".format(cname, gname),
-                                   k + 1, g[k + 1], gname))
+            edge = "{0:.9g} degrees (2 {1} - {2})".format(g[k] + width[k], cname, gname)
+            if missing[k] == 0:
+                return "{0} = {1} ends at {2}, but {0} = {3} starts at {4:.9g} ({5})".format(
+                    what, idx[k], edge, idx[k + 1], g[k + 1], gname)
+            return ("{0} = {1} ends at {2} and the next {3} with valid cells, {4}, starts at "
+                    "{5:.9g} ({6}); that does not leave room for the {7} blank {3}(s) between "
+                    "them, so {6} is not one increasing function of the index".format(
+                        what, idx[k], edge, what.split()[0], idx[k + 1], g[k + 1], gname,
+                        missing[k]))
+        if zonal and idx.size:
+            span = float(np.sum(width) + np.sum(gap))          # unwrapped, first to last column
+            outer = int(idx[0] + (n - 1 - idx[-1]))            # blank columns at the array ends
+            room = outer * float(width.min()) * LATLON_GAP_RANGE[0]
+            if span + room > 360.0 + LATLON_EDGE_TOL * float(width.min()):
+                return ("the columns with valid cells span {0:.9g} degrees of longitude, which "
+                        "leaves no room for the {1} column(s) without valid cells at the ends "
+                        "of the array within 360 degrees".format(span, outer) if outer else
+                        "the columns span {0:.9g} degrees of longitude, more than 360".format(span))
     return None
 
 
@@ -1045,15 +1106,69 @@ def _predicted_pair(index, verts, p, sw, area, ne):
     return found[1], found[-1]
 
 
+_DEGENERATE = (
+    "grid: connectivity 'exch2': {0} has a zero-length edge ({1}). The corner method needs "
+    "cells with four distinct corners. A regular lat-lon grid, in particular one with a "
+    "wet row that touches a pole, must be declared connectivity='latlon' (--connectivity "
+    "latlon), also when the run uses pkg/exch2 and so has a data.exch2 file")
+
+
+def _degenerate_edge(geom):
+    """The first wet cell seen to have a zero-length edge, as ``(cell, why)``,
+    or None.
+
+    Two cases are visible before the corner search. The cell's SW corner
+    coincides (within :data:`VERTEX_EPS`) with the SW corner of a valid array
+    neighbour, so the edge between them has no length: the row of a lat-lon
+    grid whose SW corners are all at the south pole. Or the edge opposite the
+    SW corner collapses onto a geographic pole: ``2 YC - YG`` is +-90 degrees
+    (within :data:`POLE_TOL`) while the center is not on the SW corner's
+    meridian, as in the row of a lat-lon grid that ends at the north pole. (A
+    cubed-sphere cell with one corner at the pole has its center on the
+    meridian of the opposite corner, and is not degenerate.)
+    """
+    nx, ny = geom.nx, geom.ny
+    w = geom.wet_cells
+    G = geom.corners
+    i, j = w % nx, w // nx
+    for step, ok, name in ((1, i + 1 < nx, "east"), (-1, i > 0, "west"),
+                           (nx, j + 1 < ny, "north"), (-nx, j > 0, "south")):
+        a = w[ok]
+        b = a + step
+        use = geom.valid[b]
+        a, b = a[use], b[use]
+        same = _norm(G[a] - G[b]) <= VERTEX_EPS
+        if same.any():
+            return int(a[np.argmax(same)]), ("its SW corner (XG, YG) is also the SW corner of "
+                                             "its {0} array neighbour".format(name))
+    reach = 2.0 * geom.lat[w] - geom.glat[w]
+    off = np.abs(np.sin(np.deg2rad(geom.lon[w] - geom.glon[w])))
+    pole = ((np.abs(np.abs(reach) - 90.0) <= POLE_TOL)
+            & (np.abs(geom.glat[w]) < 90.0 - POLE_TOL) & (off > 1e-9))
+    if pole.any():
+        k = int(np.argmax(pole))
+        return int(w[k]), ("the edge opposite its SW corner collapses onto the {0} pole: "
+                           "2 YC - YG = {1:.9g}".format("north" if reach[k] > 0 else "south",
+                                                        reach[k]))
+    return None
+
+
 def _corner_pairs(geom):
     """Wet node pairs sharing a cell edge, from corner vertices (module notes).
 
     Cells whose array neighbours pass the quadrilateral test take their
     corners from the array; the others from :func:`_geometric_corners`.
     Returns the pairs and the counts reported in ``WetGraph.diagnostics``.
+    A wet cell with a zero-length edge (:func:`_degenerate_edge`, or two of
+    its corners being the same vertex) is a :class:`BuildError` that names
+    the cell and points to ``connectivity='latlon'``: its links can't be
+    matched by corners, and would otherwise be lost silently.
     """
     nx, ny = geom.nx, geom.ny
     P, G = geom.centers, geom.corners
+    degenerate = _degenerate_edge(geom)
+    if degenerate is not None:
+        raise BuildError(_DEGENERATE.format(geom.describe(degenerate[0]), degenerate[1]))
     vid = _vertex_ids(geom)
     w = geom.wet_cells
     nw = w.size
@@ -1080,6 +1195,11 @@ def _corner_pairs(geom):
         for (r, slot), pos in gsynth.items():
             synth[(int(rest[r]), slot)] = pos
         scale = dict(zip(rest.tolist(), m_est.tolist()))
+    for s0, s1 in ((0, 1), (1, 2), (2, 3), (3, 0), (0, 2), (1, 3)):
+        same = (ids[:, s0] >= 0) & (ids[:, s0] == ids[:, s1])
+        if same.any():
+            raise BuildError(_DEGENERATE.format(
+                geom.describe(w[np.argmax(same)]), "two of its corners are the same vertex"))
     # Edges: consecutive corners. Vertex-vertex edges match exactly.
     nodes = np.arange(nw)
     keys, owners = [], []
