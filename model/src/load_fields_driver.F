@@ -35,6 +35,8 @@ C       |-- CTRL_MAP_GENTIM2D
 C       |
 C       |-- BULKF_FIELDS_LOAD
 C       |
+C       |-- RNF_FIELDS_LOAD
+C       |
 C       |-- EXF_GETFORCING
 C       |
 C       |-- CHEAPAML_FIELDS_LOAD
@@ -203,6 +205,17 @@ C--   Bulk-Formulae pkg: load all forcing fields at current time
         CALL TIMER_STOP ('BULKF_FIELDS_LOAD  [LOAD_FLDS_DRIVER]',myThid)
       ENDIF
 #endif /* ALLOW_BULK_FORCE */
+
+#ifdef ALLOW_RNF
+C--   Sparse runoff pkg: load source records at current time, before
+C     the external forcing package that receives the runoff field
+      IF ( useRNF ) THEN
+# ifdef ALLOW_DEBUG
+        IF (debugMode) CALL DEBUG_CALL('RNF_FIELDS_LOAD',myThid)
+# endif
+        CALL RNF_FIELDS_LOAD( myTime, myIter, myThid )
+      ENDIF
+#endif /* ALLOW_RNF */
 
 C--   Call external forcing package
 #ifdef ALLOW_EXF

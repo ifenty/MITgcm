@@ -449,6 +449,14 @@ C-    Runoff temperature
      I     myTime, myIter, myThid )
 #endif /* ALLOW_RUNOFTEMP */
 
+#ifdef ALLOW_RNF
+C-    Sparse runoff (pkg/rnf) sets the runoff field, after the reads
+C     above and before the control variables below are added
+      IF ( useRNF ) THEN
+       CALL RNF_EXF_RUNOFF( myTime, myIter, myThid )
+      ENDIF
+#endif /* ALLOW_RNF */
+
 #ifdef ALLOW_SALTFLX
 C-    Salt flux
       CALL EXF_SET_FLD(

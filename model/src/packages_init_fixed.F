@@ -90,6 +90,8 @@ C       |-- STIC_INIT_FIXED
 C       |
 C       |-- ICEFRONT_INIT_FIXED
 C       |
+C       |-- RNF_INIT_FIXED
+C       |
 C       |-- FRAZIL_INIT_FIXED
 C       |
 C       |-- SEAICE_INIT_FIXED
@@ -496,6 +498,15 @@ C--   Initialise fixed array for Float pkg
         CALL ICEFRONT_INIT_FIXED( myThid )
       ENDIF
 #endif /* ALLOW_ICEFRONT */
+
+#ifdef ALLOW_RNF
+      IF (useRNF) THEN
+# ifdef ALLOW_DEBUG
+        IF (debugMode) CALL DEBUG_CALL('RNF_INIT_FIXED',myThid)
+# endif
+        CALL RNF_INIT_FIXED( myThid )
+      ENDIF
+#endif /* ALLOW_RNF */
 
 #ifdef ALLOW_FRAZIL
       IF (useFRAZIL) THEN

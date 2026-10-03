@@ -82,6 +82,8 @@ C       |-- STIC_READPARMS
 C       |
 C       |-- ICEFRONT_READPARMS
 C       |
+C       |-- RNF_READPARMS
+C       |
 C       |-- SEAICE_READPARMS
 C       |
 C       |-- SALT_PLUME_READPARMS
@@ -289,6 +291,11 @@ C--   if useSTIC=T, set STEEP_ICECAVITY parameters; otherwise just return
 #ifdef ALLOW_ICEFRONT
 C--   if useICEFRONT=T, set ICEFRONT parameters; otherwise just return
       CALL ICEFRONT_READPARMS( myThid )
+#endif
+
+#ifdef ALLOW_RNF
+C--   if useRNF=T, set RNF parameters; otherwise just return
+      CALL RNF_READPARMS( myThid )
 #endif
 
 #ifdef ALLOW_SEAICE

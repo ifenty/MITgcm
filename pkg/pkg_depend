@@ -35,6 +35,7 @@ fizhi		+atm_common
 aim		+atm_common
 aim_v23		+atm_common
 exf		=cal
+rnf		+exf
 profiles	+cal
 obsfit		+cal
 flt		+mdsio

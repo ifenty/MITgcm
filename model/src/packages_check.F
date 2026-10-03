@@ -61,6 +61,8 @@ C       |-- STREAMICE_CHECK
 C       |
 C       |-- ICEFRONT_CHECK
 C       |
+C       |-- RNF_CHECK
+C       |
 C       |-- THSICE_CHECK
 C       |
 C       |-- LAND_CHECK
@@ -374,6 +376,12 @@ C---  Continue with standard packages (with standard usePKG flag)
 #else
       IF ( useICEFRONT ) CALL PACKAGES_ERROR_MSG(
      &                  'ICEFRONT', ' ', myThid )
+#endif
+
+#ifdef ALLOW_RNF
+      IF ( useRNF ) CALL RNF_CHECK( myThid )
+#else
+      IF ( useRNF ) CALL PACKAGES_ERROR_MSG( 'RNF', ' ', myThid )
 #endif
 
 #ifdef ALLOW_THSICE
