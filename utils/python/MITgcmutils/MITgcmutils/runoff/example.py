@@ -417,7 +417,7 @@ def write_example(path, **overrides):
                  "units": "1"})
         if spec["target_level"] is not None:
             put("target_level", ("target",), spec["target_level"],
-                {"long_name": "1-based model level k (schema 1.0: always 1)"})
+                {"long_name": "target level (schema 1.0: always 1 = surface cell)"})
         if derived["target_cell_area"] is not None:
             put("target_cell_area", ("target",), derived["target_cell_area"],
                 {"long_name": "horizontal cell area rA", "units": "m2"})
