@@ -243,6 +243,24 @@ To regenerate the runoff files (needs python3 with numpy; the output is determin
   python3 gendata.py
 ```
 
+**Sparse form of the runoff.** Each `input.rnof_<X>/` also holds the same runoff as a
+sparse-runoff NetCDF file for `pkg/rnf`, organised by source: `runoff_sparse.nc`
+(`runoff_sparse_1978.nc` and `runoff_sparse_1979.nc` in `input.rnof_yearly`). In
+`input.rnof_const` it keeps the four groups of `runoff_sources.txt` as sources, and
+`runoff_sparse_cells.nc` holds the same runoff with one source per cell. In the other
+tests the cells of a group vary differently in time, so each of the seven cells is its
+own source. No test reads these files yet. To regenerate them, and the sparse runoff of
+`global_ocean.cs32x15/input.rnof_sparse/` (needs python3 with numpy and netCDF4; the
+cs32 file also needs the grid output of a `global_ocean.cs32x15` run):
+
+```
+  cd MITgcm/verification/lab_sea/input.rnof_const
+  python3 gen_sparse.py
+```
+
+The script uses `MITgcmutils.runoff.convert`, whose documentation gives the time axis
+written for each timing mode.
+
 **Timing conventions of `pkg/exf` used by these tests.** Line numbers refer to the
 source files in `pkg/exf/` unless another package is named.
 

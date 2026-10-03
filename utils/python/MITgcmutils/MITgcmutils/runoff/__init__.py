@@ -1,5 +1,5 @@
 """Sparse runoff forcing files for pkg/exf: schema, integrity checker, examples,
-target-table builder.
+target-table builder, dense-file converter.
 
 * :mod:`.schema`: constants of sparse-runoff schema 1.0 (names, units,
   calendars, tolerances), as specified in ``docs/runoff_schema.md``.
@@ -13,16 +13,22 @@ target-table builder.
   grid output (pointwise or spread emission), and write them to a new file or
   into an existing runoff file. The command line is ``python -m
   MITgcmutils.runoff.targets SOURCES --grid-dir DIR -o OUT [options]``.
+* :func:`dense_to_sparse` and :func:`sparse_to_dense` (module :mod:`.convert`):
+  convert a dense exf ``runoffFile`` (m/s), with the grid and the exf timing
+  settings, to a sparse file, and back. The command line is ``python -m
+  MITgcmutils.runoff.convert DENSE -o OUT --grid-dir DIR [options]``.
 
 Requires ``netCDF4`` (with ``cftime``), installed by the ``runoff`` extra:
 ``pip install MITgcmutils[runoff]``. :mod:`.targets` uses ``scipy`` when it
 is installed (k-d tree search) and a slower pure-numpy search otherwise.
 
 ``check_files``, ``Finding``, ``Report``, ``write_example``,
-``build_targets`` and ``write_targets`` are imported lazily, on first access
-(module ``__getattr__``, PEP 562). Importing :mod:`.check` or :mod:`.targets`
-eagerly here would put it in ``sys.modules`` before ``python -m
-MITgcmutils.runoff.check`` (or ``.targets``) runs it as ``__main__``, and
+``build_targets``, ``write_targets``, ``dense_to_sparse`` and
+``sparse_to_dense`` are imported lazily, on first access
+(module ``__getattr__``, PEP 562). Importing :mod:`.check`, :mod:`.targets`
+or :mod:`.convert` eagerly here would put it in ``sys.modules`` before
+``python -m MITgcmutils.runoff.check`` (or ``.targets``, ``.convert``) runs it
+as ``__main__``, and
 runpy would then print a RuntimeWarning about the module being imported twice.
 """
 
@@ -31,12 +37,13 @@ from importlib import import_module
 from . import schema
 
 __all__ = ["check_files", "write_example", "build_targets", "write_targets",
-           "Finding", "Report", "schema"]
+           "dense_to_sparse", "sparse_to_dense", "Finding", "Report", "schema"]
 
 #: Lazily imported exports: name -> submodule that defines it.
 _LAZY = {"check_files": "check", "Finding": "check", "Report": "check",
          "write_example": "example",
-         "build_targets": "targets", "write_targets": "targets"}
+         "build_targets": "targets", "write_targets": "targets",
+         "dense_to_sparse": "convert", "sparse_to_dense": "convert"}
 
 
 def __getattr__(name):
