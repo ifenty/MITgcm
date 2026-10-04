@@ -8,10 +8,12 @@ C !INTERFACE: ==========================================================
 
 C !DESCRIPTION:
 C     Print the RNF parameters (data.rnf), the constants fixed by the
-C     model contract and the array bounds of RNF_SIZE.h to the
-C     standard output, in the layout of EXF_SUMMARY.
-C     The per-process counts of sources and targets are added with
-C     the reader (RUNOFF-004).
+C     model contract, the array bounds of RNF_SIZE.h and what the
+C     static read of RNF_file found, to the standard output of every
+C     process, in the layout of EXF_SUMMARY.
+C     Called at the end of RNF_INIT_FIXED, so the counts are the
+C     final ones. RNF_nSrcProc and RNF_nTgtProc are the counts of
+C     this process; RNF_nTgtOwned is summed over all processes.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -120,6 +122,26 @@ C--   Array bounds of RNF_SIZE.h
       CALL WRITE_0D_I( RNF_nFile, INDEX_NONE,
      &  'RNF_nFile =',
      &  ' /* number of runoff files */')
+
+C--   What the static read of RNF_file found
+      CALL WRITE_0D_I( RNF_nSrcFile, INDEX_NONE,
+     &  'RNF_nSrcFile =',
+     &  ' /* sources in the file */')
+      CALL WRITE_0D_I( RNF_nTgtFile, INDEX_NONE,
+     &  'RNF_nTgtFile =',
+     &  ' /* target entries in the file */')
+      CALL WRITE_0D_I( RNF_nRecFile, INDEX_NONE,
+     &  'RNF_nRecFile =',
+     &  ' /* time records in the file */')
+      CALL WRITE_0D_I( RNF_nSrcProc, INDEX_NONE,
+     &  'RNF_nSrcProc =',
+     &  ' /* tile-source entries of this process */')
+      CALL WRITE_0D_I( RNF_nTgtProc, INDEX_NONE,
+     &  'RNF_nTgtProc =',
+     &  ' /* target entries owned by this process */')
+      CALL WRITE_0D_I( RNF_nTgtOwned, INDEX_NONE,
+     &  'RNF_nTgtOwned =',
+     &  ' /* target entries owned over all processes */')
 
       CALL PRINT_MESSAGE( blkLin, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )

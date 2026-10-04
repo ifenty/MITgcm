@@ -25,6 +25,7 @@ C     !USES:
       IMPLICIT NONE
 #include "SIZE.h"
 #include "EEPARAMS.h"
+#include "RNF_SIZE.h"
 #include "RNF.h"
 
 C     !INPUT/OUTPUT PARAMETERS:
@@ -71,6 +72,7 @@ C     !USES:
       IMPLICIT NONE
 #include "SIZE.h"
 #include "EEPARAMS.h"
+#include "RNF_SIZE.h"
 #include "RNF.h"
 
 C     !INPUT/OUTPUT PARAMETERS:
@@ -119,6 +121,7 @@ C     !USES:
       IMPLICIT NONE
 #include "SIZE.h"
 #include "EEPARAMS.h"
+#include "RNF_SIZE.h"
 #include "RNF.h"
 
 C     !INPUT/OUTPUT PARAMETERS:

@@ -20,6 +20,7 @@ C !USES: ===============================================================
 #include "SIZE.h"
 #include "EEPARAMS.h"
 #include "PARAMS.h"
+#include "RNF_SIZE.h"
 #include "RNF.h"
 
 C !INPUT PARAMETERS: ===================================================

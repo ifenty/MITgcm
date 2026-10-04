@@ -40,14 +40,16 @@ C       sets the default otherwise.
 C     o USE_OLD_EXTERNAL_FORCING defined: the package has no hooks in
 C       EXTERNAL_FORCING_T/S.
 C
-C     Package skeleton: after the checks pass, the run stops because
-C     the reader of RNF_file is not implemented yet (RUNOFF-004).
+C     The refusals that need the file itself (its header, its table
+C     entries and its targets) are in RNF_INIT_FIXED, which has
+C     already run when this routine is called.
 
 C !USES: ===============================================================
       IMPLICIT NONE
 #include "SIZE.h"
 #include "EEPARAMS.h"
 #include "PARAMS.h"
+#include "RNF_SIZE.h"
 #include "RNF.h"
 #ifdef ALLOW_EXF
 # include "EXF_PARAM.h"
@@ -170,19 +172,6 @@ C--   No pkg/rnf hooks in the old forcing routines
       WRITE(msgBuf,'(A)') 'RNF_CHECK: configuration checks passed'
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )
-
-C--   Package skeleton: the configuration is accepted, but the reader
-C     of RNF_file does not exist yet, so no runoff would be applied.
-C     Stop here and do not run without it. The reader (RUNOFF-004)
-C     removes this block.
-      WRITE(msgBuf,'(2A)') 'RNF_CHECK: RNF: reader not implemented',
-     &  ' (RUNOFF-004)'
-      CALL PRINT_ERROR( msgBuf, myThid )
-      WRITE(msgBuf,'(2A)') 'RNF_CHECK: useRNF=.TRUE. cannot be used',
-     &  ' until RNF_file can be read'
-      CALL PRINT_ERROR( msgBuf, myThid )
-      CALL ALL_PROC_DIE( 0 )
-      STOP 'ABNORMAL END: S/R RNF_CHECK'
 
       _END_MASTER(myThid)
 

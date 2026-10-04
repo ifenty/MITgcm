@@ -1,0 +1,13 @@
+# Sparse runoff package parameters (pkg/rnf)
+#
+# Same runoff as the dense case input.rnof_const, in sparse form:
+# 4 grouped sources (baffin 3 cells, labrador 2, greenland, newfound)
+# and 7 target cells, one constant record. The file is written by
+# ../input.rnof_const/gen_sparse.py from runoff_const.bin and is read
+# from that directory, so both cases use the same runoff.
+#
+# The timing parameters are left unset: the file says
+# mitgcm_time_sampling = "constant".
+ &RNF_PARM01
+  RNF_file = '../input.rnof_const/runoff_sparse.nc',
+ &
