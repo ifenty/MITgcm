@@ -125,6 +125,8 @@ C                          file sorted by source counts it once
 #ifdef HAVE_NETCDF
       INTEGER errNC, fid, dimId
       INTEGER idSrc, idCell, idFrac, idLev, idArea
+      INTEGER nVars
+      CHARACTER*(NF_MAX_NAME) varNam
       INTEGER iStart(1), iCount(1)
       INTEGER tgtSrcBuf(RNF_nBuf)
       INTEGER tgtCellBuf(RNF_nBuf)
@@ -376,6 +378,34 @@ C--   Nothing can be placed when the header is wrong
      &       'looking for the variable target_cell_area',
      &       errNC, myThid )
       ENDIF
+
+C--   Say so when the file carries a property that this reader does
+C     not apply yet, so that it is not dropped silently: the volume
+C     would enter at the ambient temperature and at salinity 0, and a
+C     tracer would get nothing. The names are matched to the ptracers
+C     and the terms are applied by RUNOFF-013.
+      errNC = NF_INQ_NVARS( fid, nVars )
+      CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
+     &     'counting the variables of the file', errNC, myThid )
+      DO k = 1, nVars
+        varNam = ' '
+        errNC = NF_INQ_VARNAME( fid, k, varNam )
+        CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
+     &       'reading the name of a variable', errNC, myThid )
+        IF ( varNam(1:16) .EQ. 'runoff_temperatu' .OR.
+     &       varNam(1:15) .EQ. 'runoff_salinity' .OR.
+     &       varNam(1:15) .EQ. 'runoff_ptracer_' ) THEN
+          iL = MAX( 1, ILNBLNK(varNam) )
+          WRITE(msgBuf,'(3A)') '** WARNING ** RNF_INIT_FIXED: ',
+     &      varNam(1:iL), ' is in the file but is not applied yet'
+          CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
+     &                        SQUEEZE_RIGHT, myThid )
+          WRITE(msgBuf,'(2A)') '** WARNING ** RNF_INIT_FIXED: only',
+     &      ' the runoff volume flux is applied (RUNOFF-013)'
+          CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
+     &                        SQUEEZE_RIGHT, myThid )
+        ENDIF
+      ENDDO
 
 C--   4a. The global record of every row of every tile, with the
 C     arithmetic of S/R MDSIO_READ_FIELD. The grid kind is never
