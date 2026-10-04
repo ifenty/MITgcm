@@ -1,0 +1,14 @@
+# Sparse runoff package parameters (pkg/rnf)
+#
+# The runoff of input.icedyn in sparse form: 1189 one-cell sources on
+# the 192 x 32 exch2 global I/O layout (W2_mapIO = -1), one constant
+# record. The 12 dense records of core_rnof_1_cs32.bin are identical,
+# so the dense run applies this field at every step.
+#
+# The file is written by
+# ../../lab_sea/input.rnof_const/gen_sparse.py cs32const
+# and says mitgcm_time_sampling = "constant", so no timing parameter
+# is set here.
+ &RNF_PARM01
+  RNF_file = 'runoff_sparse_const.nc',
+ &

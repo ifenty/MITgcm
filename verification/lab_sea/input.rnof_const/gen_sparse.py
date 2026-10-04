@@ -7,6 +7,10 @@ with one command from the committed inputs::
     python3 gen_sparse.py            # all cases
     python3 gen_sparse.py clim cs32  # only these
 
+The cases are the six lab_sea ones, ``cs32`` (12 records with
+temperature) and ``cs32const`` (record 1 alone, as one constant record,
+the file of the cs32 sparse = dense oracle).
+
 It needs ``MITgcmutils`` (``utils/python/MITgcmutils`` of this source tree is
 used when the package is not installed), ``numpy`` and ``netCDF4``.
 
@@ -59,6 +63,14 @@ schema 1.0 in which the 360-day repeat cycle is one year. The cubed-sphere
 cell areas and mask are read from the grid output of a model run
 (``output_esx_input.seaice`` or ``output_esx_input.icedyn``), so this case is
 skipped when no run directory exists.
+
+cs32 constant, ``global_ocean.cs32x15/input.rnof_sp_icedyn/
+runoff_sparse_const.nc`` (case ``cs32const``): record 1 of the same
+dense runoff with ``runoffperiod = 0``, without temperature. The 12
+records of ``core_rnof_1_cs32.bin`` are identical, so the dense
+``input.icedyn`` run applies this field at every step, which makes the
+file the input of the sparse = dense oracle ``input.rnof_sp_icedyn``.
+It needs the same grid output and is skipped without it.
 """
 import os
 import sys
@@ -155,11 +167,39 @@ def cs32(out_dir=None, grid_dir=None):
         temperature=os.path.join(CS32, "input.seaice", "runoff_temperature.bin"))
 
 
+def cs32_const(out_dir=None, grid_dir=None):
+    """Convert record 1 of the cs32 runoff as one constant record.
+
+    This is the file of the sparse = dense oracle
+    ``global_ocean.cs32x15/input.rnof_sp_icedyn``: the same runoff as
+    ``input.icedyn``, whose 12 dense records are identical, with
+    ``runoffperiod = 0`` so that one record is read once at
+    initialisation. It has no temperature, because the volume path is
+    what that oracle tests. Converting a 12-record dense file with
+    period 0 warns that exf uses 1 of the 12 records.
+    """
+    grid_dir = grid_dir or cs32_grid_dir()
+    if grid_dir is None:
+        print("cs32const: skipped, no grid output (RAC, hFacC) in "
+              + ", ".join(CS32_GRID_DIRS))
+        return []
+    out_dir = out_dir or os.path.join(CS32, "input.rnof_sp_icedyn")
+    os.makedirs(out_dir, exist_ok=True)
+    return convert.dense_to_sparse(
+        os.path.join(CS32, "input.icedyn", "core_rnof_1_cs32.bin"),
+        os.path.join(out_dir, "runoff_sparse_const.nc"), grid_dir=grid_dir,
+        prec=64, period=0.0, calendar="360_day",
+        grid_name="global_ocean.cs32x15")
+
+
 def main(argv=None):
-    cases = (argv if argv is not None else sys.argv[1:]) or list(LAB_CASES) + ["cs32"]
+    cases = (argv if argv is not None else sys.argv[1:]) or \
+        list(LAB_CASES) + ["cs32", "cs32const"]
     for case in cases:
         if case == "cs32":
             paths = cs32()
+        elif case == "cs32const":
+            paths = cs32_const()
         elif case in LAB_CASES:
             paths = lab_sea(case)
         else:
