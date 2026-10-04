@@ -282,7 +282,7 @@ CEOP
      &    ': RNF: the attribute ', attName(1:jL), ' of ',
      &    varName(1:kL), ' must be one number'
         CALL PRINT_ERROR( msgBuf, myThid )
-        WRITE(msgBuf,'(A,2(A,I6))') 'RNF_NC_ATT_REAL: it has type',
+        WRITE(msgBuf,'(A,I6,A,I6,A)') 'RNF_NC_ATT_REAL: it has type',
      &    attType, ' and', nVals, ' value(s)'
         CALL PRINT_ERROR( msgBuf, myThid )
         CALL ALL_PROC_DIE( 0 )
@@ -450,7 +450,7 @@ CEOP
 
       iL = MAX( 1, ILNBLNK(caller) )
       jL = MAX( 1, ILNBLNK(text) )
-      WRITE(msgBuf,'(5A,I12,A,4I6)') caller(1:iL), ': RNF: ',
+      WRITE(msgBuf,'(6A,I12,A,4I6)') caller(1:iL), ': RNF: ',
      &     text(1:jL), ': source ', srcId(1:idLen),
      &     ', target_cell', cell, ', i,j,bi,bj =', i, j, bi, bj
       CALL PRINT_ERROR( msgBuf, myThid )
