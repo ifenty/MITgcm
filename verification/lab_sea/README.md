@@ -191,6 +191,8 @@ Six more secondary forward tests add `pkg/exf` runoff to the primary test, one f
 each way `pkg/exf` can time a dense `runoffFile`. Each `input.rnof_<X>/` holds only the
 files that differ from `input/`: `data.exf`, `data` (run length), `data.cal` when the
 start date changes, the runoff file or files, and the script `gendata.py` that wrote them.
+A seventh test, `input.rnof_sp_const`, applies the runoff of the constant case through
+the sparse-runoff package `pkg/rnf` instead ("Sparse form of the runoff" below).
 
 | Test | Runoff timing | `data.exf` settings | Run (first step to last step) |
 | --- | --- | --- | --- |
@@ -249,9 +251,21 @@ sparse-runoff NetCDF file for `pkg/rnf`, organised by source: `runoff_sparse.nc`
 `input.rnof_const` it keeps the four groups of `runoff_sources.txt` as sources, and
 `runoff_sparse_cells.nc` holds the same runoff with one source per cell. In the other
 tests the cells of a group vary differently in time, so each of the seven cells is its
-own source. No test reads these files yet. To regenerate them, and the sparse runoff of
-`global_ocean.cs32x15/input.rnof_sparse/` (needs python3 with numpy and netCDF4; the
-cs32 file also needs the grid output of a `global_ocean.cs32x15` run):
+own source.
+
+`input.rnof_sp_const` is the sparse test: the set-up of `input.rnof_const` with
+`useRNF = .TRUE.` in `data.pkg`, a blank `runoffFile` in `data.exf` and a `data.rnf`
+naming `../input.rnof_const/runoff_sparse.nc`. `pkg/rnf` places the seven target cells
+on the tiles and fills the exf `runoff` field, so the test must reproduce the dense
+run; its reference `results/output.rnof_sp_const.txt` is a copy of
+`results/output.rnof_const.txt`. One source (`baffin`) spans the boundary between two
+tiles and, with `-mpi 2`, between the two processes. The other sparse files are read by
+no test yet (they need the time handling).
+
+To regenerate the sparse files, and the sparse runoff of
+`global_ocean.cs32x15/input.rnof_sparse/` and
+`global_ocean.cs32x15/input.rnof_sp_icedyn/` (needs python3 with numpy and netCDF4; the
+cs32 files also need the grid output of a `global_ocean.cs32x15` run):
 
 ```
   cd MITgcm/verification/lab_sea/input.rnof_const
