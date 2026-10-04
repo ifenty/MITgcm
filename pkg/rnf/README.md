@@ -62,9 +62,9 @@ namelist `RNF_PARM01`:
 | `RNF_period` | unset | period override: 0 constant, > 0 seconds, -12 monthly climatology, -1 monthly |
 | `RNF_repCycle` | unset | repeat cycle override (s) |
 | `RNF_useYearlyFiles` | `.FALSE.` | append `_YYYY` to `RNF_file` by model year |
-| `RNF_useTemp` | `.TRUE.` | apply the runoff temperature if the file has it |
-| `RNF_useSalt` | `.TRUE.` | apply the runoff salinity if the file has it |
-| `RNF_usePtracers` | `.TRUE.` | apply the runoff tracers if the file has them |
+| `RNF_useTemp` | `.TRUE.` | apply the runoff temperature if the file has it — **inert**, see below |
+| `RNF_useSalt` | `.TRUE.` | apply the runoff salinity if the file has it — **inert**, see below |
+| `RNF_usePtracers` | `.TRUE.` | apply the runoff tracers if the file has them — **inert**, see below |
 | `RNF_monFreq` | `monitorFreq` | monitor interval (s) |
 | `RNF_debugLev` | `debugLevel` | message level |
 
@@ -74,6 +74,24 @@ other than 0 stop the run, because only a file with one constant record can
 be read. The others are read, reported by `RNF_SUMMARY` and otherwise unused
 until the time handling, the temperature, salinity and tracer terms, the
 monitor and the debug printing are implemented.
+
+**`RNF_useTemp`, `RNF_useSalt` and `RNF_usePtracers` are inert.** The reader
+applies the volume flux only: it does not read `runoff_temperature`,
+`runoff_salinity` or any `runoff_ptracer_*` variable, so setting these
+switches either way changes nothing, and a runoff cell gains water at the
+ambient temperature with no salt and no tracer. So that such a file is not
+accepted silently, `RNF_INIT_FIXED` walks the variables of the file and
+prints, for each of those variables it finds,
+
+```
+** WARNING ** RNF_INIT_FIXED: runoff_temperature is in the file but is not applied yet
+** WARNING ** RNF_INIT_FIXED: only the runoff volume flux is applied (RUNOFF-013)
+```
+
+The run continues: the volume is still correct, and the warning says which
+property is missing from the physics. RUNOFF-013 adds the tendency terms, the
+matching of `runoff_ptracer_<NAME>` to `PTRACERS_names` and the refusal of an
+unmatched name, and makes the three switches do what the table says.
 
 The constants fixed by the model contract are in `RNF.h`: `RNF_fracTol`
 (1e-6) on the fraction sum of a source, `RNF_areaTol` (1e-4) between

@@ -11,12 +11,22 @@ C     Initialize the variable part of the RNF package: read the one
 C     constant record of runoff_flux, report the flux it holds and
 C     build the dense fields.
 C
-C     Two sums are printed and must agree to the fraction tolerance:
-C     the flux summed over the sources of the file, and the flux
-C     summed over the target entries of all tiles and processes,
-C     sum_s sum_c flux_s*frac_{s,c}. The second is the volume the
-C     model will apply, so the pair is the initialization check of
-C     volume conservation.
+C     Two sums are printed: the flux summed over the sources of the
+C     file, and the flux summed over the target entries of all tiles
+C     and processes, sum_s sum_c flux_s*frac_{s,c}. The second is the
+C     volume the model will apply, so the pair is the initialization
+C     check of volume conservation. They agree to the fraction
+C     tolerance whenever the fraction sums of RNF_INIT_FIXED did,
+C     which is what makes the pair a check of the placement: a target
+C     that no tile owns, or one owned twice, shows up here.
+C     The routine prints their relative difference as well and warns
+C     when it exceeds RNF_fracTol; it does not stop, because
+C     RNF_INIT_FIXED has already refused a fraction sum that is not 1
+C     and a difference here would mean an internal inconsistency
+C     rather than bad input. The value is asserted by the control
+C     cases of tests/rnf/refusal_check.py, which require the printed
+C     file sum to equal the sum computed from the file within 1e-12
+C     relative and the target sum within 1e-6.
 C
 C     Only a file with one constant record can be read. Reading the
 C     records that bracket the model time comes with the time
@@ -45,7 +55,7 @@ C !LOCAL VARIABLES: ====================================================
 C  fluxSrc              :: flux summed over the sources of the file
 C  fluxTgt              :: flux summed over the targets of all tiles
       INTEGER bi, bj, i, j, k, kSrc
-      _RL     fluxSrc, fluxTgt
+      _RL     fluxSrc, fluxTgt, fluxRef
       CHARACTER*(MAX_LEN_MBUF) msgBuf
 CEOP
 
@@ -98,6 +108,26 @@ C--   The target sum runs over the tiles of every process
      &  ' sum over the targets of all tiles [m^3/s] =', fluxTgt
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )
+
+C--   The difference of the two, which is the volume the placement
+C     would lose or double. Both sums are zero in a run whose fluxes
+C     are all zero, which is no error.
+      fluxRef = MAX( ABS(fluxSrc), ABS(fluxTgt) )
+      IF ( fluxRef .GT. 0. _d 0 ) THEN
+        WRITE(msgBuf,'(2A,1PE16.8)') 'RNF_INIT_VARIA: runoff flux,',
+     &    ' relative difference of the two sums =',
+     &    ( fluxTgt - fluxSrc )/fluxRef
+        CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
+     &                      SQUEEZE_RIGHT, myThid )
+        IF ( ABS( fluxTgt - fluxSrc ) .GT. RNF_fracTol*fluxRef ) THEN
+          WRITE(msgBuf,'(2A)') '** WARNING ** RNF_INIT_VARIA: the',
+     &      ' applied volume differs from the flux of the file by'
+          CALL PRINT_ERROR( msgBuf, myThid )
+          WRITE(msgBuf,'(2A)') '** WARNING ** RNF_INIT_VARIA: more',
+     &      ' than RNF_fracTol; the target table loses volume'
+          CALL PRINT_ERROR( msgBuf, myThid )
+        ENDIF
+      ENDIF
       _END_MASTER(myThid)
       _BARRIER
 
