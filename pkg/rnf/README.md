@@ -68,10 +68,12 @@ namelist `RNF_PARM01`:
 | `RNF_monFreq` | `monitorFreq` | monitor interval (s) |
 | `RNF_debugLev` | `debugLevel` | message level |
 
-An unset timing override means the value in the file is used. Of these,
-`RNF_file` and `RNF_debugLev` have an effect so far; `RNF_useYearlyFiles` and
-an `RNF_period` other than 0 stop the run, because only a file with one
-constant record can be read.
+An unset timing override means the value in the file is used. Of these, only
+`RNF_file` has an effect so far, and `RNF_useYearlyFiles` or an `RNF_period`
+other than 0 stop the run, because only a file with one constant record can
+be read. The others are read, reported by `RNF_SUMMARY` and otherwise unused
+until the time handling, the temperature, salinity and tracer terms, the
+monitor and the debug printing are implemented.
 
 The constants fixed by the model contract are in `RNF.h`: `RNF_fracTol`
 (1e-6) on the fraction sum of a source, `RNF_areaTol` (1e-4) between
