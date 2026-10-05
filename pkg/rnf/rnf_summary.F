@@ -19,6 +19,11 @@ C     cell centres against XC,YC ran on this file and grid.
 C     The RNF_rec* values are the time handling RNF_TIME_SETUP
 C     resolved from the file and the data.rnf overrides, i.e. what
 C     the pkg/exf record selection is actually called with.
+C     RNF_hasTemp, RNF_hasSalt, RNF_nTrUse, RNF_applyT, RNF_applyS
+C     and one line per runoff tracer report which time series of the
+C     file are applied and which ptracer each tracer feeds, so that a
+C     run never looks as if it carried a property it did not; and
+C     RNF_lagFlds reports which time level the tendency terms use.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -36,11 +41,17 @@ C  none
 
 #ifdef ALLOW_RNF
 
+C !FUNCTIONS: ==========================================================
+      INTEGER  ILNBLNK
+      EXTERNAL ILNBLNK
+
 C !LOCAL VARIABLES: ====================================================
 C  blkLin               :: blank line
 C  msgBuf               :: message buffer
       CHARACTER*1 blkLin
       CHARACTER*(MAX_LEN_MBUF) msgBuf
+      CHARACTER*(RNF_idLen) trNam
+      INTEGER k, iL
 CEOP
 
       _BEGIN_MASTER(myThid)
@@ -176,6 +187,41 @@ C     target_lon/target_lat or the grid's XC,YC are not degrees.
       CALL WRITE_0D_L( RNF_lonLatChk, INDEX_NONE,
      &  'RNF_lonLatChk =',
      &  ' /* target_lon,lat were checked against XC,YC */')
+
+C--   Which time series of the file are applied, and what each term
+C     will do (package design, decisions 3 and 4). RNF_applyT and
+C     RNF_applyS are false when the term they stand for is
+C     identically zero, in which case the tendency routine returns
+C     without touching the array. RNF_lagFlds says which time level
+C     the terms use: the current step, or the step before it in the
+C     one freshwater formulation where the model's own PmEpR lags.
+      CALL WRITE_0D_L( RNF_hasTemp, INDEX_NONE,
+     &  'RNF_hasTemp =',
+     &  ' /* runoff_temperature is read from the file */')
+      CALL WRITE_0D_L( RNF_hasSalt, INDEX_NONE,
+     &  'RNF_hasSalt =',
+     &  ' /* runoff_salinity is read from the file */')
+      CALL WRITE_0D_I( RNF_nTrUse, INDEX_NONE,
+     &  'RNF_nTrUse =',
+     &  ' /* runoff tracers read from the file */')
+      CALL WRITE_0D_L( RNF_applyT, INDEX_NONE,
+     &  'RNF_applyT =',
+     &  ' /* the temperature term can be non-zero */')
+      CALL WRITE_0D_L( RNF_applyS, INDEX_NONE,
+     &  'RNF_applyS =',
+     &  ' /* the salinity term can be non-zero */')
+      CALL WRITE_0D_L( RNF_lagFlds, INDEX_NONE,
+     &  'RNF_lagFlds =',
+     &  ' /* the terms use the previous step (lagged PmEpR) */')
+      DO k = 1, RNF_nTrUse
+        trNam = RNF_trNam(k)
+        iL = MAX( 1, ILNBLNK(trNam) )
+        WRITE(msgBuf,'(A,I3,3A,I3)') 'RNF_SUMMARY: runoff tracer',
+     &    k, ' is runoff_ptracer_', trNam(1:iL),
+     &    ', applied to ptracer', RNF_trPtr(k)
+        CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
+     &                      SQUEEZE_RIGHT, myThid )
+      ENDDO
 
       CALL PRINT_MESSAGE( blkLin, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )

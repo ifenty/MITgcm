@@ -146,6 +146,15 @@ C                           the entries of this tile (fraction check)
 C     RNF_srcFlux        :: volume flux of local source k at the
 C                           current model time [m^3/s], combined from
 C                           the two record buffers by RNF_FIELDS_LOAD
+C     RNF_srcTemp        :: its temperature [degC], idem
+C     RNF_srcTvld        :: 1 when that temperature is present in
+C                           every record used, 0 otherwise; the
+C                           source then contributes to neither (mT)
+C                           nor m_T and enters at the reference
+C                           temperature (package design, decision 3,
+C                           "Missing temperature")
+C     RNF_srcSalt        :: its salinity [g/kg], idem
+C     RNF_srcTrc         :: its concentration of runoff tracer n, idem
 C
 C--   Dense per-tile fields, rebuilt at every time step
 C     RNF_vflx           :: runoff volume flux per unit area [m/s],
@@ -153,6 +162,20 @@ C                           sum_s flux_s*frac_s,c / rA; this is what
 C                           RNF_EXF_RUNOFF puts in the exf field
 C     RNF_mflx           :: runoff mass flux [kg/m^2/s],
 C                           rhoConstFresh*RNF_vflx
+C     RNF_mflxT          :: the same sum restricted to the sources
+C                           whose temperature is present, m_T
+C                           [kg/m^2/s] (package design, decision 3)
+C     RNF_mXT            :: (mT) = sum_s m_s*T_s over the sources with
+C                           a temperature [kg/m^2/s * degC]
+C     RNF_mXS            :: (mS) = sum_s m_s*S_s over all sources
+C                           [kg/m^2/s * g/kg]
+C     RNF_mXTr           :: (mC_n) = sum_s m_s*C_s,n for runoff tracer
+C                           n [kg/m^2/s * tracer units]
+C
+C--   The same five fields at the time level the tendency terms use
+C     (RNF_ap*). They are a copy of the fields above, except in the
+C     one case where the model's own freshwater flux lags: see
+C     RNF_lagFlds below.
 C
 C--   Work space of the global sums (filled by the master thread,
 C     read by every thread inside GLOBAL_SUM_VECTOR_RL)
@@ -161,6 +184,14 @@ C                           sources
 C     RNF_sumVec         :: their sum over tiles and processes
 C     RNF_fluxBuf        :: NetCDF read buffer of one chunk of fluxes
 C     RNF_tileSum        :: one value per tile, for GLOBAL_SUM_TILE_RL
+C     RNF_vldBuf         :: "the value was present" flag of each
+C                           entry of RNF_fluxBuf
+C     RNF_vldWrk         :: per-source "the value was present" flags
+C                           of the series RNF_NC_READ_ONE just read.
+C                           Only the temperature keeps them (in
+C                           RNF_bufTvld); every other series refuses a
+C                           missing value, so one work array serves
+C                           all of them
 C-----------------------------------------------------------------------
 CEOP
 
@@ -269,11 +300,90 @@ C                      with the same weights as RNF_srcFlux
       COMMON /RNF_BUF_I/
      &     RNF_bufRec, RNF_bufYr
 
+C     RNF_bufTemp   :: its per-tile source temperatures [degC]
+C     RNF_bufTvld   :: 1 where that temperature is present, 0 where it
+C                      is missing (a missing temperature is allowed:
+C                      runoff schema 1.0, section 3.5, and the source
+C                      then enters at the reference temperature). The
+C                      stored temperature of a missing value is 0, so
+C                      that a fill value cannot propagate as a NaN
+C     RNF_bufSalt   :: its per-tile source salinities [g/kg]
+C     RNF_bufTrc    :: its per-tile source tracer concentrations
       _RL RNF_bufFlux(RNF_nSrcTile,nSx,nSy,2)
+      _RL RNF_bufTemp(RNF_nSrcTile,nSx,nSy,2)
+      _RL RNF_bufTvld(RNF_nSrcTile,nSx,nSy,2)
+      _RL RNF_bufSalt(RNF_nSrcTile,nSx,nSy,2)
+      _RL RNF_bufTrc (RNF_nSrcTile,nSx,nSy,2,RNF_nTr)
       _RL RNF_bufSum(2)
       _RL RNF_fluxFile
       COMMON /RNF_BUF_R/
-     &     RNF_bufFlux, RNF_bufSum, RNF_fluxFile
+     &     RNF_bufFlux, RNF_bufTemp, RNF_bufTvld,
+     &     RNF_bufSalt, RNF_bufTrc,
+     &     RNF_bufSum, RNF_fluxFile
+
+C--   What time series the file carries, found by RNF_NC_SERIES from
+C     the variables of the file (package design, decisions 3 and 4).
+C     A variable the user switched off (RNF_useTemp, RNF_useSalt,
+C     RNF_usePtracers) is reported and then treated as absent.
+C     RNF_hasTemp  :: the file has runoff_temperature and it is used
+C     RNF_hasSalt  :: the file has runoff_salinity and it is used
+C     RNF_nTrUse   :: number of runoff_ptracer_<NAME> variables used
+C     RNF_trPtr    :: ptracer number (1..PTRACERS_numInUse) that
+C                     runoff tracer n feeds. A <NAME> with no matching
+C                     PTRACERS_names entry stops the run
+C     RNF_trNam    :: the <NAME> of runoff tracer n, i.e. the variable
+C                     name without the runoff_ptracer_ prefix
+C     RNF_applyT   :: the temperature term can be non-zero, so
+C                     RNF_TENDENCY_APPLY_T has work to do
+C     RNF_applyS   :: idem for salinity. True also without
+C                     runoff_salinity when salt_EvPrRn is not 0,
+C                     because the water then still arrives at
+C                     salinity 0 while the model gave it salt_EvPrRn
+C                     (package design, decision 3, "S = 0")
+      LOGICAL RNF_hasTemp
+      LOGICAL RNF_hasSalt
+      LOGICAL RNF_applyT
+      LOGICAL RNF_applyS
+      COMMON /RNF_SERIES_L/
+     &     RNF_hasTemp, RNF_hasSalt, RNF_applyT, RNF_applyS
+
+      INTEGER RNF_nTrUse
+      INTEGER RNF_trPtr(RNF_nTr)
+      COMMON /RNF_SERIES_I/
+     &     RNF_nTrUse, RNF_trPtr
+
+      CHARACTER*(RNF_idLen) RNF_trNam(RNF_nTr)
+      COMMON /RNF_SERIES_C/
+     &     RNF_trNam
+
+C--   Time level of the tendency terms (package design, decision 3,
+C     "Time level"). The package fields must belong to the same step
+C     as the freshwater flux the model uses for its own temperature,
+C     salinity and tracer terms. That flux is EmPmR of the current
+C     step in branches L and U and PmEpR of the current step in
+C     branch N with staggerTimeStep, but PmEpR of the PREVIOUS step
+C     in branch N without it (model/src/integr_continuity.F:172-179),
+C     and zero at the first step of a run that starts at iteration 0
+C     (model/src/ini_nlfs_vars.F:59).
+C     The two iteration numbers below are what the time levels are
+C     tracked by, rather than the model times themselves, because an
+C     iteration is exact: myTime - deltaTClock of one step need not be
+C     bitwise the myTime of the step before it.
+C     RNF_lagFlds :: the terms use the fields of the previous step,
+C                    i.e. branch N without staggerTimeStep
+C     RNF_curIter :: iteration of RNF_vflx and the other dense fields
+C                    (RNF_noIter: nothing built yet)
+C     RNF_apIter  :: iteration of the RNF_ap* fields, the ones the
+C                    tendency routines read (RNF_noIter: none yet)
+      LOGICAL RNF_lagFlds
+      COMMON /RNF_TLEV_L/ RNF_lagFlds
+
+      INTEGER RNF_curIter
+      INTEGER RNF_apIter
+      COMMON /RNF_TLEV_I/ RNF_curIter, RNF_apIter
+
+      INTEGER RNF_noIter
+      PARAMETER ( RNF_noIter = -999999999 )
 
 C--   Counts of the static read
       INTEGER RNF_nSrcFile
@@ -301,21 +411,44 @@ C--   Per-tile source and target lists
       _RL RNF_tgtFrac   (RNF_nTgtTile,nSx,nSy)
       _RL RNF_srcFracSum(RNF_nSrcTile,nSx,nSy)
       _RL RNF_srcFlux   (RNF_nSrcTile,nSx,nSy)
+      _RL RNF_srcTemp   (RNF_nSrcTile,nSx,nSy)
+      _RL RNF_srcTvld   (RNF_nSrcTile,nSx,nSy)
+      _RL RNF_srcSalt   (RNF_nSrcTile,nSx,nSy)
+      _RL RNF_srcTrc    (RNF_nSrcTile,nSx,nSy,RNF_nTr)
       COMMON /RNF_LIST_R/
-     &     RNF_tgtFrac, RNF_srcFracSum, RNF_srcFlux
+     &     RNF_tgtFrac, RNF_srcFracSum, RNF_srcFlux,
+     &     RNF_srcTemp, RNF_srcTvld, RNF_srcSalt, RNF_srcTrc
 
 C--   Dense per-tile fields
-      _RL RNF_vflx(1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
-      _RL RNF_mflx(1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_vflx (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_mflx (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_mflxT(1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_mXT  (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_mXS  (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_mXTr (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy,RNF_nTr)
       COMMON /RNF_FIELDS_R/
-     &     RNF_vflx, RNF_mflx
+     &     RNF_vflx, RNF_mflx, RNF_mflxT,
+     &     RNF_mXT, RNF_mXS, RNF_mXTr
+
+C--   The same, at the time level of the tendency terms
+      _RL RNF_apMflx (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_apMflxT(1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_apXT   (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_apXS   (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
+      _RL RNF_apXTr  (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy,RNF_nTr)
+      COMMON /RNF_APPLY_R/
+     &     RNF_apMflx, RNF_apMflxT,
+     &     RNF_apXT, RNF_apXS, RNF_apXTr
 
 C--   Work space of the global sums and of the NetCDF reads
       _RL RNF_sumWrk(nSx,nSy,RNF_nBuf)
       _RL RNF_sumVec(RNF_nBuf)
       _RL RNF_fluxBuf(RNF_nBuf)
       _RL RNF_tileSum(nSx,nSy)
+      _RL RNF_vldBuf(RNF_nBuf)
+      _RL RNF_vldWrk(RNF_nSrcTile,nSx,nSy)
       COMMON /RNF_WORK_R/
-     &     RNF_sumWrk, RNF_sumVec, RNF_fluxBuf, RNF_tileSum
+     &     RNF_sumWrk, RNF_sumVec, RNF_fluxBuf, RNF_tileSum,
+     &     RNF_vldBuf, RNF_vldWrk
 
 #endif /* ALLOW_RNF */

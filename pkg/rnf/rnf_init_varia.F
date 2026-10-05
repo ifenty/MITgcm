@@ -62,7 +62,7 @@ C  none
 C !LOCAL VARIABLES: ====================================================
 C  fluxSrc              :: flux summed over the sources of the file
 C  fluxTgt              :: flux summed over the targets of all tiles
-      INTEGER bi, bj, i, j, k, kSrc
+      INTEGER bi, bj, i, j, k, kSrc, iTr
       _RL     fluxSrc, fluxTgt, fluxRef
       CHARACTER*(MAX_LEN_MBUF) msgBuf
 CEOP
@@ -80,6 +80,21 @@ C     RNF_EXF_RUNOFF does not touch
          DO i = 1-OLx, sNx+OLx
           RNF_vflx(i,j,bi,bj) = 0. _d 0
           RNF_mflx(i,j,bi,bj) = 0. _d 0
+          RNF_mflxT(i,j,bi,bj) = 0. _d 0
+          RNF_mXT(i,j,bi,bj) = 0. _d 0
+          RNF_mXS(i,j,bi,bj) = 0. _d 0
+          RNF_apMflx(i,j,bi,bj) = 0. _d 0
+          RNF_apMflxT(i,j,bi,bj) = 0. _d 0
+          RNF_apXT(i,j,bi,bj) = 0. _d 0
+          RNF_apXS(i,j,bi,bj) = 0. _d 0
+         ENDDO
+        ENDDO
+        DO iTr = 1, RNF_nTr
+         DO j = 1-OLy, sNy+OLy
+          DO i = 1-OLx, sNx+OLx
+           RNF_mXTr(i,j,bi,bj,iTr) = 0. _d 0
+           RNF_apXTr(i,j,bi,bj,iTr) = 0. _d 0
+          ENDDO
          ENDDO
         ENDDO
         RNF_tileSum(bi,bj) = 0. _d 0
@@ -94,6 +109,13 @@ C     reads what the start time needs
         RNF_bufSum(k) = 0. _d 0
       ENDDO
       RNF_fluxFile = 0. _d 0
+
+C--   No time level is built yet, which is what tells the first
+C     RNF_FIELDS_LOAD that it has to evaluate the lagged level of a
+C     restart from the records (package design, decision 3, "Time
+C     level"). Like the record buffers, these are not in a pickup.
+      RNF_curIter = RNF_noIter
+      RNF_apIter  = RNF_noIter
 
       _END_MASTER(myThid)
       _BARRIER

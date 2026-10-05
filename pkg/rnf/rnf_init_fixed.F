@@ -148,8 +148,6 @@ C                          file sorted by source counts it once
       INTEGER idSrc, idCell, idFrac, idLev, idArea
       INTEGER idLon, idLat
       INTEGER attNum
-      INTEGER nVars
-      CHARACTER*(NF_MAX_NAME) varNam
       INTEGER iStart(1), iCount(1)
       INTEGER tgtSrcBuf(RNF_nBuf)
       INTEGER tgtCellBuf(RNF_nBuf)
@@ -202,12 +200,35 @@ C--   Empty lists
       RNF_nTgtOwned = 0
       RNF_tableRead = .FALSE.
       RNF_lonLatChk = .FALSE.
+C--   What the file carries, until RNF_NC_SERIES says otherwise
+      RNF_hasTemp = .FALSE.
+      RNF_hasSalt = .FALSE.
+      RNF_applyT  = .FALSE.
+      RNF_applyS  = .FALSE.
+      RNF_nTrUse  = 0
+      DO k = 1, RNF_nTr
+        RNF_trNam(k) = ' '
+        RNF_trPtr(k) = 0
+      ENDDO
 
 C--   The surface level of a column, as S/R APPLY_FORCING_T selects
 C     it (1 in z coordinates, Nr in pressure coordinates, kSurfC with
 C     pkg/shelfice). Schema 1.0 allows only the surface.
       kSurf = 1
       IF ( usingPCoords ) kSurf = Nr
+
+C--   Which time level the tendency terms must use (package design,
+C     decision 3, "Time level"). The model applies its own
+C     temperature, salinity and tracer terms with the freshwater flux
+C     of the current step, except in the nonlinear-free-surface (or
+C     pressure-coordinate) real-freshwater-flux branch without
+C     staggerTimeStep, where PmEpR is the flux of the previous step
+C     (model/src/integr_continuity.F:172-179). The package terms
+C     follow, or the heat budget of each step would be off by
+C     (m_previous - m_current)*theta*mass2rUnit.
+      RNF_lagFlds = ( nonlinFreeSurf.GT.0 .OR. usingPCoords )
+     &              .AND. useRealFreshWaterFlux
+     &              .AND. .NOT.staggerTimeStep
 
 C--   Global I/O layout, as S/R MDSIO_READ_FIELD sets it
       xSize = Nx
@@ -448,33 +469,28 @@ C        numbers, which would refuse a valid file.
      &                      SQUEEZE_RIGHT, myThid )
       ENDIF
 
-C--   Say so when the file carries a property that this reader does
-C     not apply yet, so that it is not dropped silently: the volume
-C     would enter at the ambient temperature and at salinity 0, and a
-C     tracer would get nothing. The names are matched to the ptracers
-C     and the terms are applied by RUNOFF-013.
-      errNC = NF_INQ_NVARS( fid, nVars )
-      CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
-     &     'counting the variables of the file', errNC, myThid )
-      DO k = 1, nVars
-        varNam = ' '
-        errNC = NF_INQ_VARNAME( fid, k, varNam )
-        CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
-     &       'reading the name of a variable', errNC, myThid )
-        IF ( varNam(1:16) .EQ. 'runoff_temperatu' .OR.
-     &       varNam(1:15) .EQ. 'runoff_salinity' .OR.
-     &       varNam(1:15) .EQ. 'runoff_ptracer_' ) THEN
-          iL = MAX( 1, ILNBLNK(varNam) )
-          WRITE(msgBuf,'(3A)') '** WARNING ** RNF_INIT_FIXED: ',
-     &      varNam(1:iL), ' is in the file but is not applied yet'
-          CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
-     &                        SQUEEZE_RIGHT, myThid )
-          WRITE(msgBuf,'(2A)') '** WARNING ** RNF_INIT_FIXED: only',
-     &      ' the runoff volume flux is applied (RUNOFF-013)'
-          CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
-     &                        SQUEEZE_RIGHT, myThid )
-        ENDIF
-      ENDDO
+C--   2c. Which of the optional time series the file carries, and
+C     which ptracer each runoff tracer feeds. A tracer name with no
+C     matching PTRACERS_names entry raises errCount here and stops
+C     the run below (package design, decision 4).
+      CALL RNF_NC_SERIES( fid,
+     U     errCount,
+     I     myThid )
+
+C--   Whether each tendency term can be non-zero at all. The
+C     temperature term is the mass flux of the sources that carry a
+C     temperature times the difference from the reference, so without
+C     runoff_temperature it is identically zero and the routine
+C     returns without touching gT. The salinity term is
+C     [(mS) - m*S_ref]: without runoff_salinity (mS) is zero, so it
+C     vanishes only when S_ref is zero as well, i.e. when
+C     salt_EvPrRn = 0, its default. With any other value the water
+C     still arrives fresh, which is what the contract says a file
+C     without runoff_salinity means, and the term is the difference
+C     from the salinity the model gave it (package design,
+C     decision 3, "S = 0").
+      RNF_applyT = RNF_hasTemp
+      RNF_applyS = RNF_hasSalt .OR. salt_EvPrRn.NE.0. _d 0
 
 C--   4a. The global record of every row of every tile, with the
 C     arithmetic of S/R MDSIO_READ_FIELD. The grid kind is never
@@ -971,6 +987,13 @@ C     read a record, so that RNF_INIT_VARIA can be called twice.
 
 C--   Print the package parameters and what the read found
       CALL RNF_SUMMARY( myThid )
+
+C--   Register the diagnostics of the applied tendency terms
+#ifdef ALLOW_DIAGNOSTICS
+      IF ( useDiagnostics ) THEN
+        CALL RNF_DIAGNOSTICS_INIT( myThid )
+      ENDIF
+#endif /* ALLOW_DIAGNOSTICS */
 
 #endif /* ALLOW_RNF */
 

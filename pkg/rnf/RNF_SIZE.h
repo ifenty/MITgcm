@@ -13,8 +13,12 @@ C     RNF_nSrcTile :: maximum number of sources on one tile
 C     RNF_nTgtTile :: maximum number of target entries on one tile
 C     RNF_nBuf     :: chunk length for NetCDF reads and for the
 C                     global fraction sum
-C     RNF_nTr      :: maximum number of runoff tracers
-C                     (no tracer is read yet: RUNOFF-013)
+C     RNF_nTr      :: maximum number of runoff tracers, i.e. of
+C                     runoff_ptracer_<NAME> variables in the file.
+C                     A file with more stops the run and the message
+C                     prints the value needed. Each one costs two
+C                     record buffers of RNF_nSrcTile per tile and two
+C                     dense per-tile fields, so this is not free
 C     RNF_nFile    :: number of runoff files (1 in phase 1)
 
       INTEGER RNF_nSrcTile
@@ -24,6 +28,6 @@ C     RNF_nFile    :: number of runoff files (1 in phase 1)
       INTEGER RNF_nBuf
       PARAMETER ( RNF_nBuf = 1000 )
       INTEGER RNF_nTr
-      PARAMETER ( RNF_nTr = 1 )
+      PARAMETER ( RNF_nTr = 5 )
       INTEGER RNF_nFile
       PARAMETER ( RNF_nFile = 1 )
