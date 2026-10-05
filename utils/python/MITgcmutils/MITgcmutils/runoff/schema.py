@@ -91,7 +91,10 @@ PTRACER_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
 #: Variables the model reads (section 1): these names, and every variable whose
 #: name starts with ``runoff_``. They must not be packed (S07). ``target_lon``,
-#: ``target_lat`` and user-added ``target_*`` variables are not model-read.
+#: ``target_lat`` and user-added ``target_*`` variables are not listed here.
+#: The model does read the two coordinates, but only to check them against
+#: ``XC``/``YC``, and it skips that check when they are packed rather than
+#: comparing stored numbers, so packing them is not an S07 error.
 MODEL_READ_VARIABLES = ("time", "time_bnds", "source_id", "target_source",
                         "target_cell", "target_fraction", "target_level",
                         "target_cell_area")

@@ -41,7 +41,9 @@ Implementation notes that the schema leaves to the checker:
   ``time_bnds``, ``source_id``, ``target_source``, ``target_cell``,
   ``target_fraction``, ``target_level``, ``target_cell_area``, ``runoff_*``) is
   an error (S07), and fill and range checks then apply to the stored values.
-  ``target_lon``/``target_lat`` and user variables may be packed. A value counts as
+  ``target_lon``/``target_lat`` and user variables may be packed (the model
+  checks the two coordinates against the grid but never uses a value, and
+  skips that check when they are packed). A value counts as
   missing when it is NaN, equals the variable's ``_FillValue`` (or, without
   that attribute, the netCDF default fill of the variable's type, which is
   what unwritten records read as), or equals a ``missing_value``.
@@ -86,8 +88,9 @@ Implementation notes that the schema leaves to the checker:
   With ``fixed`` sampling the spacing across a file boundary must equal
   ``mitgcm_time_period``. ``_YYYY`` files must also share one offset of their
   first ``time`` value from 1 January of the year in their name.
-* R03 compares unpacked ``target_lon``/``target_lat``, which may be packed
-  because the model doesn't read them.
+* R03 compares unpacked ``target_lon``/``target_lat``, which may be packed.
+  The model reads them only to check them against ``XC``/``YC``, and skips
+  that check when they are packed, so packing them stays an S07 pass.
 * U01 requires the units listed in :data:`schema.TABLE_UNITS` on those schema
   variables when present, and forbids units on index variables; user-added
   ``*_lon``/``*_lat`` variables are not checked.
@@ -1473,8 +1476,11 @@ def _read_grid_field(grid_dir, name):
 def _check_grid(ctx, grid):
     """R01-R03, and G01 when the grid's shape doesn't match (nx, ny).
 
-    ``target_lon``/``target_lat`` are not model-read and may be packed; R03
-    compares their unpacked values (``scale_factor``/``add_offset`` applied).
+    ``target_lon``/``target_lat`` may be packed: the model reads them only
+    to check them against ``XC``/``YC`` and skips that check when they are
+    packed. R03 compares their unpacked values
+    (``scale_factor``/``add_offset`` applied), so it is the stricter of the
+    two and warns where the model is silent.
     """
     if ctx.nx is None or ctx.targets is None:
         return

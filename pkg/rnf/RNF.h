@@ -46,6 +46,17 @@ C     RNF_fracTol        :: tolerance on the sum over the domain of
 C                           the fractions of one source (must be 1)
 C     RNF_areaTol        :: relative tolerance between the cell area
 C                           stored in the file and rA
+C     RNF_lonLatTol      :: tolerance between the cell centre stored
+C                           in the file (target_lon, target_lat) and
+C                           the owning cell's XC,YC, as a fraction of
+C                           that cell's own grid spacing. 0.5 means
+C                           "the stored centre has to lie inside the
+C                           owning cell", which is the weakest test
+C                           that still rejects a one-cell move: a
+C                           target moved to a neighbour is a whole
+C                           spacing away, twice this threshold. The
+C                           threshold scales with the local cell, so
+C                           it needs no retuning between grids
 C     RNF_fluxMax        :: a flux above this value in absolute terms
 C                           counts as a missing value (not allowed)
 C     RNF_idLen          :: length of a source id in the model
@@ -129,6 +140,8 @@ CEOP
       PARAMETER ( RNF_fracTol = 1. _d -6 )
       _RL RNF_areaTol
       PARAMETER ( RNF_areaTol = 1. _d -4 )
+      _RL RNF_lonLatTol
+      PARAMETER ( RNF_lonLatTol = 0.5 _d 0 )
       _RL RNF_fluxMax
       PARAMETER ( RNF_fluxMax = 1. _d 30 )
       INTEGER RNF_idLen
@@ -138,8 +151,14 @@ CEOP
 
 C--   RNF_tableRead :: the target table was read and every entry of
 C     it was valid, so the fraction sums are worth computing
+C     RNF_lonLatChk :: the cell-centre check of RNF_INIT_FIXED ran.
+C     It is optional in both directions: target_lon/target_lat are
+C     optional in schema 1.0, and XC,YC are degrees only on a
+C     spherical-polar or curvilinear grid. RNF_SUMMARY reports it so
+C     that a run never looks guarded when it was not.
       LOGICAL RNF_tableRead
-      COMMON /RNF_COUNT_L/ RNF_tableRead
+      LOGICAL RNF_lonLatChk
+      COMMON /RNF_COUNT_L/ RNF_tableRead, RNF_lonLatChk
 
 C--   Counts of the static read
       INTEGER RNF_nSrcFile

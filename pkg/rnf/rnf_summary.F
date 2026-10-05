@@ -14,6 +14,8 @@ C     process, in the layout of EXF_SUMMARY.
 C     Called at the end of RNF_INIT_FIXED, so the counts are the
 C     final ones. RNF_nSrcProc and RNF_nTgtProc are the counts of
 C     this process; RNF_nTgtOwned is summed over all processes.
+C     RNF_lonLatChk reports whether the optional check of the target
+C     cell centres against XC,YC ran on this file and grid.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -105,6 +107,9 @@ C--   Constants fixed by the model contract
       CALL WRITE_0D_RL( RNF_areaTol, INDEX_NONE,
      &  'RNF_areaTol =',
      &  ' /* relative tolerance on the target cell area */')
+      CALL WRITE_0D_RL( RNF_lonLatTol, INDEX_NONE,
+     &  'RNF_lonLatTol =',
+     &  ' /* cell centre tolerance, in cell spacings */')
 
 C--   Array bounds of RNF_SIZE.h
       CALL WRITE_0D_I( RNF_nSrcTile, INDEX_NONE,
@@ -142,6 +147,12 @@ C--   What the static read of RNF_file found
       CALL WRITE_0D_I( RNF_nTgtOwned, INDEX_NONE,
      &  'RNF_nTgtOwned =',
      &  ' /* target entries owned over all processes */')
+C--   Whether the optional cell-centre check ran, so that a run is
+C     never taken to be guarded by it when the file did not carry
+C     target_lon/target_lat or the grid's XC,YC are not degrees.
+      CALL WRITE_0D_L( RNF_lonLatChk, INDEX_NONE,
+     &  'RNF_lonLatChk =',
+     &  ' /* target_lon,lat were checked against XC,YC */')
 
       CALL PRINT_MESSAGE( blkLin, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )

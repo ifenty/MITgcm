@@ -31,8 +31,17 @@ C        myYGlobalLo, or from the exch2 I/O variables including the
 C        fold and long-line cases. A target whose record is a record
 C        of the tile belongs to it;
 C     5. the checks of an owned target: on land, beyond an open
-C        boundary (maskInC), under an ice shelf (kTopC) and, when the
-C        file has target_cell_area, against rA;
+C        boundary (maskInC), under an ice shelf (kTopC), when the
+C        file has target_cell_area, against rA, and when it has
+C        target_lon/target_lat, against the cell's own centre
+C        XC,YC. The last one is what catches a target moved to
+C        another cell of the same shape: across a cubed-sphere facet
+C        boundary the two cells have rA that is bitwise equal, so no
+C        area tolerance separates them, while their centres are far
+C        apart (RUNOFF-033). It is skipped, with a warning saying
+C        why, for a file without those two variables (they are
+C        optional in schema 1.0), for one that packs them, and on a
+C        grid whose XC,YC are not degrees;
 C     6. the fraction sum of every source over all tiles and
 C        processes (GLOBAL_SUM_VECTOR_RL, one chunk of sources at a
 C        time). This also catches a target that no tile owns, when
@@ -111,6 +120,9 @@ C                          file sorted by source counts it once
       INTEGER iSrcF, cellF, levF, iRec, iLoc, kSrc
       INTEGER refuse
       _RL     fracF, areaF
+      _RL     lonF, latF
+      _RL     cellLon, cellLat
+      _RL     dLon, cosAng, gcDist, tolDist
       LOGICAL badEnt, placed, found, foundNx, foundNy
       LOGICAL fileOpen
       CHARACTER*(MAX_LEN_MBUF) msgBuf
@@ -125,6 +137,8 @@ C                          file sorted by source counts it once
 #ifdef HAVE_NETCDF
       INTEGER errNC, fid, dimId
       INTEGER idSrc, idCell, idFrac, idLev, idArea
+      INTEGER idLon, idLat
+      INTEGER attNum
       INTEGER nVars
       CHARACTER*(NF_MAX_NAME) varNam
       INTEGER iStart(1), iCount(1)
@@ -133,7 +147,10 @@ C                          file sorted by source counts it once
       INTEGER tgtLevBuf(RNF_nBuf)
       _RL     tgtFracBuf(RNF_nBuf)
       _RL     tgtAreaBuf(RNF_nBuf)
+      _RL     tgtLonBuf(RNF_nBuf)
+      _RL     tgtLatBuf(RNF_nBuf)
       LOGICAL hasLev, hasArea
+      LOGICAL hasLon, hasLat, degGrid, packed
 #endif /* HAVE_NETCDF */
 CEOP
 
@@ -175,6 +192,7 @@ C--   Empty lists
       RNF_nTgtProc = 0
       RNF_nTgtOwned = 0
       RNF_tableRead = .FALSE.
+      RNF_lonLatChk = .FALSE.
 
 C--   The surface level of a column, as S/R APPLY_FORCING_T selects
 C     it (1 in z coordinates, Nr in pressure coordinates, kSurfC with
@@ -378,6 +396,73 @@ C--   Nothing can be placed when the header is wrong
      &       'looking for the variable target_cell_area',
      &       errNC, myThid )
       ENDIF
+      hasLon = .FALSE.
+      errNC = NF_INQ_VARID( fid, 'target_lon', idLon )
+      IF ( errNC .EQ. NF_NOERR ) THEN
+        hasLon = .TRUE.
+      ELSEIF ( errNC .NE. NF_ENOTVAR ) THEN
+        CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
+     &       'looking for the variable target_lon',
+     &       errNC, myThid )
+      ENDIF
+      hasLat = .FALSE.
+      errNC = NF_INQ_VARID( fid, 'target_lat', idLat )
+      IF ( errNC .EQ. NF_NOERR ) THEN
+        hasLat = .TRUE.
+      ELSEIF ( errNC .NE. NF_ENOTVAR ) THEN
+        CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
+     &       'looking for the variable target_lat',
+     &       errNC, myThid )
+      ENDIF
+
+C--   Whether the cell-centre check can run. Three conditions, each
+C     of which leaves a legal schema-1.0 file acceptable:
+C     a) the file has both target_lon and target_lat. They are
+C        optional, and one of the two alone says nothing;
+C     b) XC,YC are degrees. GRID.h states that they are metres on a
+C        Cartesian grid and degrees on a spherical-polar one, so the
+C        check is restricted to the grids whose XC,YC are the
+C        degrees that target_lon/target_lat are defined in
+C        (spherical polar, and curvilinear: cubed sphere and LLC);
+C     c) neither variable is packed. The schema's no-packing rule
+C        covers the model-read variables, and these two were not
+C        model-read before this check existed, so a schema-1.0 file
+C        may carry scale_factor or add_offset on them. This reader
+C        reads stored values and does not unpack, so a packed
+C        variable is skipped rather than compared against raw
+C        numbers, which would refuse a valid file.
+      degGrid = usingSphericalPolarGrid .OR. usingCurvilinearGrid
+      packed = .FALSE.
+      IF ( hasLon .AND. hasLat ) THEN
+        errNC = NF_INQ_ATTID( fid, idLon, 'scale_factor', attNum )
+        IF ( errNC .EQ. NF_NOERR ) packed = .TRUE.
+        errNC = NF_INQ_ATTID( fid, idLon, 'add_offset', attNum )
+        IF ( errNC .EQ. NF_NOERR ) packed = .TRUE.
+        errNC = NF_INQ_ATTID( fid, idLat, 'scale_factor', attNum )
+        IF ( errNC .EQ. NF_NOERR ) packed = .TRUE.
+        errNC = NF_INQ_ATTID( fid, idLat, 'add_offset', attNum )
+        IF ( errNC .EQ. NF_NOERR ) packed = .TRUE.
+      ENDIF
+      RNF_lonLatChk = hasLon .AND. hasLat .AND. degGrid
+     &                .AND. .NOT.packed
+      IF ( .NOT.RNF_lonLatChk ) THEN
+        WRITE(msgBuf,'(2A)') '** WARNING ** RNF_INIT_FIXED: the',
+     &    ' target cell centres are not checked against XC,YC'
+        CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
+     &                      SQUEEZE_RIGHT, myThid )
+        IF ( .NOT.( hasLon .AND. hasLat ) ) THEN
+          WRITE(msgBuf,'(2A)') '** WARNING ** RNF_INIT_FIXED: the',
+     &      ' file has no target_lon/target_lat (optional in 1.0)'
+        ELSEIF ( packed ) THEN
+          WRITE(msgBuf,'(2A)') '** WARNING ** RNF_INIT_FIXED:',
+     &      ' target_lon/target_lat carry scale_factor/add_offset'
+        ELSE
+          WRITE(msgBuf,'(2A)') '** WARNING ** RNF_INIT_FIXED: XC,YC',
+     &      ' are not degrees on this grid (not spherical polar)'
+        ENDIF
+        CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
+     &                      SQUEEZE_RIGHT, myThid )
+      ENDIF
 
 C--   Say so when the file carries a property that this reader does
 C     not apply yet, so that it is not dropped silently: the volume
@@ -474,6 +559,16 @@ C--   3. and 4b. The target table, one chunk of entries at a time
           CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
      &         'reading target_cell_area', errNC, myThid )
         ENDIF
+        IF ( RNF_lonLatChk ) THEN
+          errNC = NF_GET_VARA_DOUBLE( fid, idLon, iStart, iCount,
+     &                                tgtLonBuf )
+          CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
+     &         'reading target_lon', errNC, myThid )
+          errNC = NF_GET_VARA_DOUBLE( fid, idLat, iStart, iCount,
+     &                                tgtLatBuf )
+          CALL RNF_NC_ERROR( 'RNF_INIT_FIXED',
+     &         'reading target_lat', errNC, myThid )
+        ENDIF
 
         DO n = 1, nLoc
           kEnt = iEnt0 + n - 1
@@ -484,6 +579,12 @@ C--   3. and 4b. The target table, one chunk of entries at a time
           IF ( hasLev ) levF = tgtLevBuf(n)
           areaF = 0. _d 0
           IF ( hasArea ) areaF = tgtAreaBuf(n)
+          lonF = 0. _d 0
+          latF = 0. _d 0
+          IF ( RNF_lonLatChk ) THEN
+            lonF = tgtLonBuf(n)
+            latF = tgtLatBuf(n)
+          ENDIF
           badEnt = .FALSE.
 
 C--       3. The entry itself, before any placement. A target_source
@@ -628,6 +729,33 @@ C              from the file only when a message needs it.
      &                  - rA(iLoc,j,bi,bj) ) .GT.
      &                  RNF_areaTol*rA(iLoc,j,bi,bj) ) THEN
                 refuse = 4
+               ELSEIF ( RNF_lonLatChk ) THEN
+C-             The cell centre the file states must be the centre of
+C              the cell the index selected. This is what catches a
+C              target moved to another cell of the same shape, which
+C              no area tolerance can catch however tight: across a
+C              cubed-sphere facet boundary the two cells have rA
+C              that is bitwise equal (RUNOFF-033).
+C              Great-circle distance between the two centres, from
+C              the dot product of the unit vectors. ACOS is poorly
+C              conditioned next to 1, but the error it can produce
+C              there is bounded by sqrt(2*eps) rad, i.e. ~0.2 m on
+C              the Earth, against a threshold of half a cell.
+                cellLon = xC(iLoc,j,bi,bj)
+                cellLat = yC(iLoc,j,bi,bj)
+                dLon = lonF - cellLon
+                cosAng = SIN( deg2rad*latF )*SIN( deg2rad*cellLat )
+     &                 + COS( deg2rad*latF )*COS( deg2rad*cellLat )
+     &                  *COS( deg2rad*dLon )
+                cosAng = MIN( 1. _d 0, MAX( -1. _d 0, cosAng ) )
+                gcDist = rSphere*ACOS( cosAng )
+C-             The owning cell's own spacing sets the scale, so one
+C              constant serves every resolution. MIN of the two
+C              directions keeps the test independent of how the grid
+C              axes are turned against north on a cubed sphere.
+                tolDist = RNF_lonLatTol
+     &                   *MIN( dxF(iLoc,j,bi,bj), dyF(iLoc,j,bi,bj) )
+                IF ( gcDist .GT. tolDist ) refuse = 5
                ENDIF
                IF ( refuse .NE. 0 ) THEN
                 nErrTgt = nErrTgt + 1
@@ -648,11 +776,25 @@ C              from the file only when a message needs it.
                   CALL RNF_NC_TGT_ERROR( 'RNF_INIT_FIXED',
      I                 'target under an ice shelf (kTopC /= 0)',
      I                 srcId, idLen, cellF, iLoc, j, bi, bj, myThid )
-                 ELSE
+                 ELSEIF ( refuse .EQ. 4 ) THEN
                   CALL RNF_NC_TGT_ERROR( 'RNF_INIT_FIXED',
      I                 'target_cell_area differs from the cell area'
      I                 //' rA', srcId, idLen, cellF,
      I                 iLoc, j, bi, bj, myThid )
+                 ELSE
+                  CALL RNF_NC_TGT_ERROR( 'RNF_INIT_FIXED',
+     I                 'target_lon/target_lat are not the centre of'
+     I                 //' this cell', srcId, idLen, cellF,
+     I                 iLoc, j, bi, bj, myThid )
+                  WRITE(msgBuf,'(2A,2F12.4,A,2F12.4)')
+     &              'RNF_INIT_FIXED: RNF:', ' file lon,lat =',
+     &              lonF, latF, ', cell XC,YC =', cellLon, cellLat
+                  CALL PRINT_ERROR( msgBuf, myThid )
+                  WRITE(msgBuf,'(2A,1PE16.8,A,E16.8,A)')
+     &              'RNF_INIT_FIXED: RNF:', ' the two centres are',
+     &              gcDist, ' m apart, at most', tolDist,
+     &              ' m is allowed'
+                  CALL PRINT_ERROR( msgBuf, myThid )
                  ENDIF
                 ENDIF
                ENDIF
