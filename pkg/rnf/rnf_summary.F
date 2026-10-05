@@ -16,6 +16,9 @@ C     final ones. RNF_nSrcProc and RNF_nTgtProc are the counts of
 C     this process; RNF_nTgtOwned is summed over all processes.
 C     RNF_lonLatChk reports whether the optional check of the target
 C     cell centres against XC,YC ran on this file and grid.
+C     The RNF_rec* values are the time handling RNF_TIME_SETUP
+C     resolved from the file and the data.rnf overrides, i.e. what
+C     the pkg/exf record selection is actually called with.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -99,6 +102,26 @@ C--   Parameters of data.rnf
       CALL WRITE_0D_I( RNF_debugLev, INDEX_NONE,
      &  'RNF_debugLev =',
      &  ' /* select RNF-debug printing level */')
+
+C--   The time handling RNF_TIME_SETUP resolved from the file's time
+C     axis and these overrides. RNF_recPeriod, RNF_recStart and
+C     RNF_recCycle are what the pkg/exf record selection is called
+C     with, so a log says which records a run reads and from when.
+      CALL WRITE_0D_RL( RNF_recPeriod, INDEX_NONE,
+     &  'RNF_recPeriod =',
+     &  ' /* period in use: 0, s, -12 or -1 */')
+      CALL WRITE_0D_RL( RNF_recStart, INDEX_NONE,
+     &  'RNF_recStart =',
+     &  ' /* time of record 1 in use [s] */')
+      CALL WRITE_0D_RL( RNF_recCycle, INDEX_NONE,
+     &  'RNF_recCycle =',
+     &  ' /* repeat cycle in use [s], 0: none */')
+      CALL WRITE_0D_I( RNF_recDate1, INDEX_NONE,
+     &  'RNF_recDate1 =',
+     &  ' /* date of record 1 YYYYMMDD (0: no date) */')
+      CALL WRITE_0D_I( RNF_recDate2, INDEX_NONE,
+     &  'RNF_recDate2 =',
+     &  ' /* date of record 1 HHMMSS */')
 
 C--   Constants fixed by the model contract
       CALL WRITE_0D_RL( RNF_fracTol, INDEX_NONE,

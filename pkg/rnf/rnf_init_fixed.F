@@ -13,12 +13,16 @@ C     (package design, decision 6). The master thread of every
 C     process reads the file, RNF_nBuf entries at a time, and keeps
 C     only what its own tiles own.
 C
+C     With RNF_useYearlyFiles the tables are read from the file of
+C     the model start year: every file of a yearly set holds the same
+C     tables (runoff schema 1.0, section 7).
+C
 C     Steps, in the order they are made:
-C     1. the global attributes: schema major version, time sampling,
-C        mitgcm_grid_nx and mitgcm_grid_ny against the model's own
-C        global I/O layout;
-C     2. the dimensions time, source and target, and the required
-C        variables;
+C     1. the global attributes: schema major version, mitgcm_grid_nx
+C        and mitgcm_grid_ny against the model's own global I/O layout;
+C     2. the dimensions time, source and target; then the time
+C        handling (RNF_TIME_SETUP, which needs the record count), and
+C        the required variables;
 C     3. the target table in chunks. Each entry is checked before it
 C        is placed: target_source and target_cell in range,
 C        target_level = 1 and target_fraction in [0,1];
@@ -125,6 +129,8 @@ C                          file sorted by source counts it once
       _RL     dLon, cosAng, gcDist, tolDist
       LOGICAL badEnt, placed, found, foundNx, foundNy
       LOGICAL fileOpen
+      INTEGER yearFil
+      CHARACTER*(MAX_LEN_FNAM) fileNam
       CHARACTER*(MAX_LEN_MBUF) msgBuf
       CHARACTER*(80) attTxt
       INTEGER attLen
@@ -134,6 +140,9 @@ C                          file sorted by source counts it once
 #ifdef ALLOW_EXCH2
       INTEGER tN
 #endif /* ALLOW_EXCH2 */
+#ifdef ALLOW_CAL
+      INTEGER startDat(4)
+#endif /* ALLOW_CAL */
 #ifdef HAVE_NETCDF
       INTEGER errNC, fid, dimId
       INTEGER idSrc, idCell, idFrac, idLev, idArea
@@ -213,35 +222,30 @@ C--   Global I/O layout, as S/R MDSIO_READ_FIELD sets it
 #endif /* ALLOW_EXCH2 */
       global_nTx = xSize/sNx
 
-C--   Time handling that this reader does not have yet
-      IF ( RNF_useYearlyFiles ) THEN
-        WRITE(msgBuf,'(2A)') 'RNF_INIT_FIXED: RNF:',
-     &    ' RNF_useYearlyFiles=.TRUE. cannot be read yet'
-        CALL PRINT_ERROR( msgBuf, myThid )
-        WRITE(msgBuf,'(2A)') 'RNF_INIT_FIXED: yearly files come',
-     &    ' with the time handling (RUNOFF-005)'
-        CALL PRINT_ERROR( msgBuf, myThid )
-        errCount = errCount + 1
+C--   The tables are read from one file of the set. Every yearly file
+C     of a set holds the same source, alias and target tables (runoff
+C     schema 1.0, section 7), so the file of the model start year is
+C     as good as any, and it is the one whose records the run reads
+C     first. Without pkg/cal there is no model year; RNF_TIME_SETUP
+C     refuses RNF_useYearlyFiles in that case.
+      yearFil = 0
+#ifdef ALLOW_CAL
+      IF ( RNF_useYearlyFiles .AND. useCAL ) THEN
+        CALL CAL_GETDATE( nIter0, startTime, startDat, myThid )
+        yearFil = startDat(1)/10000
       ENDIF
-      IF ( RNF_period .NE. UNSET_RL .AND.
-     &     RNF_period .NE. 0. _d 0 ) THEN
-        WRITE(msgBuf,'(2A,1PE16.8,A)') 'RNF_INIT_FIXED: RNF:',
-     &    ' RNF_period =', RNF_period, ' cannot be read yet'
-        CALL PRINT_ERROR( msgBuf, myThid )
-        WRITE(msgBuf,'(2A)') 'RNF_INIT_FIXED: only a constant',
-     &    ' record is read; time records come with RUNOFF-005'
-        CALL PRINT_ERROR( msgBuf, myThid )
-        errCount = errCount + 1
-      ENDIF
-      IF ( errCount .GE. 1 ) GOTO 900
+#endif /* ALLOW_CAL */
+      CALL RNF_FILE_NAME( yearFil,
+     O     fileNam,
+     I     myThid )
 
 #ifdef HAVE_NETCDF
 
 C--   1. Open the file and read the global attributes
-      iL = MAX( 1, ILNBLNK(RNF_file) )
-      errNC = NF_OPEN( RNF_file(1:iL), NF_NOWRITE, fid )
-      CALL RNF_NC_ERROR( 'RNF_INIT_FIXED', 'opening the file',
-     &     errNC, myThid )
+      iL = MAX( 1, ILNBLNK(fileNam) )
+      WRITE(msgBuf,'(2A)') 'opening ', fileNam(1:iL)
+      errNC = NF_OPEN( fileNam(1:iL), NF_NOWRITE, fid )
+      CALL RNF_NC_ERROR( 'RNF_INIT_FIXED', msgBuf, errNC, myThid )
       fileOpen = .TRUE.
 
       CALL RNF_NC_ATT_TEXT( fid, NF_GLOBAL,
@@ -266,26 +270,6 @@ C--   1. Open the file and read the global attributes
           CALL PRINT_ERROR( msgBuf, myThid )
           errCount = errCount + 1
         ENDIF
-      ENDIF
-
-      CALL RNF_NC_ATT_TEXT( fid, NF_GLOBAL, 'mitgcm_time_sampling',
-     I     'RNF_INIT_FIXED',
-     O     attTxt, attLen, found,
-     I     myThid )
-      IF ( .NOT.found ) THEN
-        WRITE(msgBuf,'(2A)') 'RNF_INIT_FIXED: RNF: the file has no',
-     &    ' global attribute mitgcm_time_sampling'
-        CALL PRINT_ERROR( msgBuf, myThid )
-        errCount = errCount + 1
-      ELSEIF ( attTxt(1:attLen) .NE. 'constant' ) THEN
-        WRITE(msgBuf,'(4A)') 'RNF_INIT_FIXED: RNF:',
-     &    ' mitgcm_time_sampling = "', attTxt(1:attLen),
-     &    '" cannot be read yet'
-        CALL PRINT_ERROR( msgBuf, myThid )
-        WRITE(msgBuf,'(2A)') 'RNF_INIT_FIXED: only "constant" is',
-     &    ' implemented; time records come with RUNOFF-005'
-        CALL PRINT_ERROR( msgBuf, myThid )
-        errCount = errCount + 1
       ENDIF
 
       CALL RNF_NC_ATT_REAL( fid, NF_GLOBAL, 'the file',
@@ -345,12 +329,6 @@ C--   2. Dimensions and required variables
      &     'reading the length of the dimension target',
      &     errNC, myThid )
 
-      IF ( RNF_nRecFile .NE. 1 ) THEN
-        WRITE(msgBuf,'(2A,I8,A)') 'RNF_INIT_FIXED: RNF: "constant"',
-     &    ' sampling but the file has', RNF_nRecFile, ' record(s)'
-        CALL PRINT_ERROR( msgBuf, myThid )
-        errCount = errCount + 1
-      ENDIF
       IF ( RNF_nSrcFile.LT.1 .OR. RNF_nTgtFile.LT.1 ) THEN
         WRITE(msgBuf,'(A,2(A,I8))') 'RNF_INIT_FIXED: RNF: the file',
      &    ' has', RNF_nSrcFile, ' source(s) and', RNF_nTgtFile,
@@ -358,6 +336,12 @@ C--   2. Dimensions and required variables
         CALL PRINT_ERROR( msgBuf, myThid )
         errCount = errCount + 1
       ENDIF
+
+C--   2b. The time handling: the sampling of the file and the
+C     data.rnf overrides, resolved into the period, start time and
+C     repeat cycle that RNF_GETREC hands to the pkg/exf record
+C     selection (package design, decision 7). It needs RNF_nRecFile.
+      CALL RNF_TIME_SETUP( fid, errCount, myThid )
 
 C--   Nothing can be placed when the header is wrong
       IF ( errCount .GE. 1 ) GOTO 900

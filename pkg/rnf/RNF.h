@@ -14,11 +14,24 @@ C \ev
 C-----------------------------------------------------------------------
 C--   Parameters that can be set in data.rnf, namelist /RNF_PARM01/
 C     RNF_file           :: name of the sparse runoff NetCDF file, or
-C                           its base name with RNF_useYearlyFiles; a
-C                           blank name stops the run when useRNF=T
+C                           its base name with RNF_useYearlyFiles, in
+C                           which case the reader reads
+C                           <base>_YYYY.nc (a trailing ".nc" of the
+C                           name given is replaced, so both
+C                           "runoff.nc" and "runoff" select
+C                           runoff_YYYY.nc); a blank name stops the
+C                           run when useRNF=T
 C     RNF_holdRecord     :: F: interpolate linearly in time between
 C                           records, as pkg/exf does;
-C                           T: hold each record over its interval
+C                           T: hold each record over its interval.
+C                           The interval is the record's own time up
+C                           to the next record's time for a fixed
+C                           period (so a yearly-file record at
+C                           1 January 00:00, which is the start of
+C                           its bounds, is held over that day), and
+C                           the calendar month for the monthly modes,
+C                           which is NOT the nearer of two mid-month
+C                           times (package design, decision 7)
 C     RNF_startDate1     :: start date of the series (YYYYMMDD);
 C                           overrides the file, 0 = not set
 C     RNF_startDate2     :: start date of the series (HHMMSS);
@@ -130,8 +143,9 @@ C     RNF_tgtSrc         :: local source index of target entry k
 C     RNF_tgtFrac        :: fraction of that source sent to the cell
 C     RNF_srcFracSum     :: fractions of local source k summed over
 C                           the entries of this tile (fraction check)
-C     RNF_srcFlux        :: current volume flux of local source k
-C                           [m^3/s], set by RNF_NC_READ_FLUX
+C     RNF_srcFlux        :: volume flux of local source k at the
+C                           current model time [m^3/s], combined from
+C                           the two record buffers by RNF_FIELDS_LOAD
 C
 C--   Dense per-tile fields, rebuilt at every time step
 C     RNF_vflx           :: runoff volume flux per unit area [m/s],
@@ -203,6 +217,63 @@ C     that a run never looks guarded when it was not.
       LOGICAL RNF_tableRead
       LOGICAL RNF_lonLatChk
       COMMON /RNF_COUNT_L/ RNF_tableRead, RNF_lonLatChk
+
+C--   Effective time handling (RNF_TIME_SETUP). These are the values
+C     RNF_GETREC hands to the pkg/exf record-selection routines, so
+C     the sparse path picks records with the code the dense path runs.
+C     They come from the file's own time axis (mitgcm_time_sampling,
+C     mitgcm_time_period, mitgcm_time_repeat, time:units,
+C     time:calendar, time, time_bnds) and are overridden by data.rnf.
+C     RNF_recPeriod :: period in exf's convention: 0 constant, > 0
+C                      seconds, -12 monthly climatology (12 records,
+C                      January to December, repeated every model
+C                      year), -1 consecutive calendar months
+C     RNF_recStart  :: time of record 1 [s], exf's fldStartTime: in
+C                      model time, or the offset from 1 January of
+C                      its own year when RNF_useYearlyFiles
+C     RNF_recCycle  :: repeat cycle [s], 0 = no repeat. For a fixed
+C                      period with mitgcm_time_repeat = "annual" it
+C                      is the span of time_bnds, which is what makes
+C                      the cycle repeat on the file's real dates
+C                      rather than on a nominal calendar year
+C     RNF_recDate1  :: date of record 1 (YYYYMMDD) that the reader
+C     RNF_recDate2  :: derived from the file or was given (HHMMSS);
+C                      0 when no date was needed (constant sampling,
+C                      or a run without pkg/cal)
+      _RL RNF_recPeriod
+      _RL RNF_recStart
+      _RL RNF_recCycle
+      COMMON /RNF_TIME_R/
+     &     RNF_recPeriod, RNF_recStart, RNF_recCycle
+
+      INTEGER RNF_recDate1
+      INTEGER RNF_recDate2
+      COMMON /RNF_TIME_I/
+     &     RNF_recDate1, RNF_recDate2
+
+C--   The two record buffers of RNF_FIELDS_LOAD. Each holds the
+C     per-tile source fluxes of one time record, tagged with the
+C     record number and the file year it came from, so that a buffer
+C     is re-read only when the bracket moves off it. A tag of -1 means
+C     "nothing read yet"; RNF_INIT_VARIA sets both, which is why a
+C     restart needs no pickup (package design, decision 8).
+C     RNF_bufRec    :: record number held in each buffer (-1: none)
+C     RNF_bufYr     :: file year it came from (0 without yearly files)
+C     RNF_bufFlux   :: its per-tile source fluxes [m^3/s]
+C     RNF_bufSum    :: its flux summed over the sources of the file
+C     RNF_fluxFile  :: flux summed over the sources of the file at the
+C                      current model time, combined from RNF_bufSum
+C                      with the same weights as RNF_srcFlux
+      INTEGER RNF_bufRec(2)
+      INTEGER RNF_bufYr(2)
+      COMMON /RNF_BUF_I/
+     &     RNF_bufRec, RNF_bufYr
+
+      _RL RNF_bufFlux(RNF_nSrcTile,nSx,nSy,2)
+      _RL RNF_bufSum(2)
+      _RL RNF_fluxFile
+      COMMON /RNF_BUF_R/
+     &     RNF_bufFlux, RNF_bufSum, RNF_fluxFile
 
 C--   Counts of the static read
       INTEGER RNF_nSrcFile

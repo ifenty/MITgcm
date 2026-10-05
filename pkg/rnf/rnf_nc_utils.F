@@ -7,7 +7,8 @@ C--   o RNF_NC_ATT_TEXT  :: read a text attribute
 C--   o RNF_NC_ATT_REAL  :: read an attribute that holds one number
 C--   o RNF_NC_SOURCE_ID :: read the id of one source
 C--   o RNF_NC_TGT_ERROR :: print one error line about a target entry
-C--   o RNF_NC_READ_FLUX :: read one record of runoff_flux
+C--   o RNF_NC_READ_FLUX :: read one record of runoff_flux from one
+C--                         file of the set
 C--
 C--  Every NF_* call and the netcdf.inc include are inside
 C--  #ifdef HAVE_NETCDF (package design, decision 6). Without NetCDF
@@ -466,16 +467,27 @@ C !ROUTINE: RNF_NC_READ_FLUX
 
 C !INTERFACE: ==========================================================
       SUBROUTINE RNF_NC_READ_FLUX(
-     I                   iRec,
-     O                   fluxSum,
+     I                   fileName, iRec,
+     O                   srcFlux, fluxSum,
      I                   myThid )
 
 C !DESCRIPTION:
-C     Read record iRec of runoff_flux (m^3/s) and store, for every
-C     tile of this process, the flux of each source that tile needs
-C     (RNF_srcFlux). Returns the flux summed over all the sources of
-C     the file. The record is read RNF_nBuf sources at a time, so no
-C     array has the length of the source dimension.
+C     Read record iRec of runoff_flux (m^3/s) from fileName and store,
+C     for every tile of this process, the flux of each source that
+C     tile needs (srcFlux). Returns the flux summed over all the
+C     sources of the file. The record is read RNF_nBuf sources at a
+C     time, so no array has the length of the source dimension.
+C
+C     fileName is RNF_file, or the file of one year of a yearly set,
+C     as RNF_FILE_NAME builds it. srcFlux is one of the two record
+C     buffers of RNF.h; the caller decides which.
+C
+C     A record outside the time dimension of this file stops the run.
+C     That is the file being too short for the run: a non-repeating
+C     series ends, and the step after its last record asks for a
+C     record that does not exist. NetCDF would refuse the read with
+C     "index exceeds dimension bound", which says nothing about
+C     runoff, so the record, the count and the file are named here.
 C
 C     A missing flux stops the run (model contract): not a number,
 C     above RNF_fluxMax in absolute value, or equal to the _FillValue
@@ -496,13 +508,17 @@ C !USES: ===============================================================
 #endif
 
 C !INPUT PARAMETERS: ===================================================
+C  fileName             :: file of the set to read from
 C  iRec                 :: time record to read (from 1)
 C  myThid               :: my thread Id number
+      CHARACTER*(*) fileName
       INTEGER iRec
       INTEGER myThid
 
 C !OUTPUT PARAMETERS: ==================================================
+C  srcFlux              :: per-tile flux of each source the tile needs
 C  fluxSum              :: flux summed over the sources of the file
+      _RL srcFlux(RNF_nSrcTile,nSx,nSy)
       _RL fluxSum
 
 #ifdef ALLOW_RNF
@@ -524,7 +540,7 @@ C  nMsg                 :: messages printed about them
 #ifdef HAVE_NETCDF
       INTEGER errNC, fid, varId, nDims
       INTEGER dimIds(NF_MAX_VAR_DIMS)
-      INTEGER srcDimId, timDimId
+      INTEGER srcDimId, timDimId, nRecLoc
       INTEGER iStart(2), iCount(2)
       LOGICAL hasFill, hasMiss
       _RL fillVal, missVal
@@ -537,16 +553,16 @@ CEOP
       DO bj = 1, nSy
        DO bi = 1, nSx
         DO k = 1, RNF_nSrcTile
-          RNF_srcFlux(k,bi,bj) = 0. _d 0
+          srcFlux(k,bi,bj) = 0. _d 0
         ENDDO
        ENDDO
       ENDDO
 
 #ifdef HAVE_NETCDF
-      iL = MAX( 1, ILNBLNK(RNF_file) )
-      errNC = NF_OPEN( RNF_file(1:iL), NF_NOWRITE, fid )
-      CALL RNF_NC_ERROR( 'RNF_NC_READ_FLUX', 'opening the file',
-     &     errNC, myThid )
+      iL = MAX( 1, ILNBLNK(fileName) )
+      WRITE(msgBuf,'(2A)') 'opening ', fileName(1:iL)
+      errNC = NF_OPEN( fileName(1:iL), NF_NOWRITE, fid )
+      CALL RNF_NC_ERROR( 'RNF_NC_READ_FLUX', msgBuf, errNC, myThid )
 
       errNC = NF_INQ_VARID( fid, 'runoff_flux', varId )
       CALL RNF_NC_ERROR( 'RNF_NC_READ_FLUX',
@@ -576,6 +592,27 @@ C     Fortran order, so that one record is one contiguous hyperslab
      &     .OR. dimIds(2).NE.timDimId ) THEN
         WRITE(msgBuf,'(2A)') 'RNF_NC_READ_FLUX: RNF: runoff_flux',
      &    ' must have the dimensions (time, source)'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        CALL ALL_PROC_DIE( 0 )
+        STOP 'ABNORMAL END: S/R RNF_NC_READ_FLUX'
+      ENDIF
+
+C--   The record has to be in this file. A non-repeating series that
+C     ends before the run does would otherwise be read past its end.
+      errNC = NF_INQ_DIMLEN( fid, timDimId, nRecLoc )
+      CALL RNF_NC_ERROR( 'RNF_NC_READ_FLUX',
+     &     'reading the length of the dimension time',
+     &     errNC, myThid )
+      IF ( iRec.LT.1 .OR. iRec.GT.nRecLoc ) THEN
+        WRITE(msgBuf,'(A,I9,A,I9,2A)') 'RNF_NC_READ_FLUX: RNF:'
+     &    //' record', iRec, ' is outside the', nRecLoc,
+     &    ' record(s) of ', fileName(1:iL)
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(2A)') 'RNF_NC_READ_FLUX: the series does not',
+     &    ' cover the model time; it needs more records,'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(2A)') 'RNF_NC_READ_FLUX: a repeat cycle',
+     &    ' (mitgcm_time_repeat) or another RNF_period'
         CALL PRINT_ERROR( msgBuf, myThid )
         CALL ALL_PROC_DIE( 0 )
         STOP 'ABNORMAL END: S/R RNF_NC_READ_FLUX'
@@ -639,7 +676,7 @@ C-      hand the chunk to every tile that needs part of it
           DO k = 1, RNF_nSrc(bi,bj)
            n = RNF_srcGlob(k,bi,bj) - iSrc0 + 1
            IF ( n.GE.1 .AND. n.LE.nLoc )
-     &          RNF_srcFlux(k,bi,bj) = RNF_fluxBuf(n)
+     &          srcFlux(k,bi,bj) = RNF_fluxBuf(n)
           ENDDO
          ENDDO
         ENDDO

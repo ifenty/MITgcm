@@ -7,18 +7,26 @@ C !INTERFACE: ==========================================================
       SUBROUTINE RNF_INIT_VARIA( myThid )
 
 C !DESCRIPTION:
-C     Initialize the variable part of the RNF package: read the one
-C     constant record of runoff_flux, report the flux it holds and
-C     build the dense fields.
+C     Initialize the variable part of the RNF package: empty the two
+C     record buffers, build the dense fields of the start time and
+C     report the flux they carry.
+C
+C     The buffers are emptied (record -1) rather than filled here, so
+C     that RNF_FIELDS_LOAD reads whatever the start time needs: the
+C     one constant record, or the two records bracketing startTime,
+C     from the file of the start year. That is also why the package
+C     needs no pickup (package design, decision 8): its state is a
+C     function of model time, and a restart re-reads it.
 C
 C     Two sums are printed: the flux summed over the sources of the
-C     file, and the flux summed over the target entries of all tiles
-C     and processes, sum_s sum_c flux_s*frac_{s,c}. The second is the
-C     volume the model will apply, so the pair is the initialization
-C     check of volume conservation. They agree to the fraction
-C     tolerance whenever the fraction sums of RNF_INIT_FIXED did,
-C     which is what makes the pair a check of the placement: a target
-C     that no tile owns, or one owned twice, shows up here.
+C     file and the flux summed over the target entries of all tiles
+C     and processes, sum_s sum_c flux_s*frac_{s,c}, both at the start
+C     time. The second is the volume the model will apply, so the pair
+C     is the initialization check of volume conservation. They agree
+C     to the fraction tolerance whenever the fraction sums of
+C     RNF_INIT_FIXED did, which is what makes the pair a check of the
+C     placement: a target that no tile owns, or one owned twice, shows
+C     up here.
 C     The routine prints their relative difference as well and warns
 C     when it exceeds RNF_fracTol; it does not stop, because
 C     RNF_INIT_FIXED has already refused a fraction sum that is not 1
@@ -28,11 +36,11 @@ C     cases of tests/rnf/refusal_check.py, which require the printed
 C     file sum to equal the sum computed from the file within 1e-12
 C     relative and the target sum within 1e-6.
 C
-C     Only a file with one constant record can be read. Reading the
-C     records that bracket the model time comes with the time
-C     handling (RUNOFF-005); this routine then loads the first
-C     records instead. The file is opened and closed by
-C     RNF_NC_READ_FLUX, so this routine may be called more than once.
+C     With more than one record the file sum is the interpolated one,
+C     fac*sum(count0) + (1-fac)*sum(count1), so the pair is still the
+C     same two ways of adding up the same instant. The files are
+C     opened and closed by RNF_NC_READ_FLUX, so this routine may be
+C     called more than once.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -78,11 +86,25 @@ C     RNF_EXF_RUNOFF does not touch
        ENDDO
       ENDDO
 
-C--   The one record of the file, by the master thread
-      CALL RNF_NC_READ_FLUX( 1,
-     O     fluxSrc,
-     I     myThid )
+C--   Both record buffers are empty, so the first RNF_FIELDS_LOAD
+C     reads what the start time needs
+      DO k = 1, 2
+        RNF_bufRec(k) = -1
+        RNF_bufYr(k)  = -1
+        RNF_bufSum(k) = 0. _d 0
+      ENDDO
+      RNF_fluxFile = 0. _d 0
 
+      _END_MASTER(myThid)
+      _BARRIER
+
+C--   The records of the start time, the source fluxes and the dense
+C     fields, so that they are set whichever routine of the model asks
+C     for them first
+      CALL RNF_FIELDS_LOAD( startTime, nIter0, myThid )
+
+      _BEGIN_MASTER(myThid)
+      fluxSrc = RNF_fluxFile
       DO bj = 1, nSy
        DO bi = 1, nSx
         DO k = 1, RNF_nTgt(bi,bj)
@@ -92,7 +114,6 @@ C--   The one record of the file, by the master thread
         ENDDO
        ENDDO
       ENDDO
-
       _END_MASTER(myThid)
       _BARRIER
 
@@ -130,10 +151,6 @@ C     are all zero, which is no error.
       ENDIF
       _END_MASTER(myThid)
       _BARRIER
-
-C--   Build the dense fields, so that they are set whichever
-C     routine of the model asks for them first
-      CALL RNF_FIELDS_LOAD( startTime, nIter0, myThid )
 
 #endif /* ALLOW_RNF */
 
