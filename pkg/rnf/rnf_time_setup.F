@@ -43,13 +43,19 @@ C     the real date its own time value names, which is what
 C     EXF_GETFFIELD_START converts to a model time through pkg/cal.
 C     EXF_GetFFieldRec then wraps the elapsed time modulo that cycle,
 C     exactly as it does for a dense runoffFile with
-C     runoffRepCycle = the same number. Anchoring on a nominal year
-C     instead - mapping a record to a day of the model's year - agrees
-C     with this only while no leap day has intervened: a 365-day cycle
-C     started in 1978 and the day-of-year mapping part company on
-C     1980-02-29 and stay one day apart, which on the lab_sea
-C     climatology is up to 2.2% of the peak runoff
-C     (tests/rnf/clim_anchor_check.py measures it).
+C     runoffRepCycle = the same number. Anchoring on a nominal calendar
+C     year instead agrees with this only while no leap day has
+C     intervened, and then parts from it by up to 2.2% of the peak
+C     runoff on the lab_sea climatology. Four such anchorings are
+C     written down and measured in
+C     tests/rnf/timing_field_check.py::_nominal_fields, whose
+C     docstring carries the figures; on that file, taking the day of
+C     the model's year as the phase first differs on
+C     1981-01-01 00:00, and re-dating each record to the same month and
+C     day of the model's year first differs on 1980-02-15 23:00. (Not
+C     1980-02-29: the carry-forward of RUNOFF-002 named that date, and
+C     scanning 43825 hourly dates from 1978-12-01 to 1983-12-01 gave
+C     these two instead.)
 C
 C     Three things the time axis is NOT read for:
 C     1. "constant" sampling. The reader returns before touching
