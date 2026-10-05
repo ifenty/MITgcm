@@ -63,18 +63,34 @@ C                           dxF jumps from 120208 to 156359 m, where
 C                           the margin is 1.78. What does hold is
 C                           that the margin is strictly above 1 on
 C                           any grid with positive cell sizes: the
-C                           centres of two distinct cells are at
-C                           least 0.5*(s_from + s_to) apart along
-C                           the move, and MIN(dxF,dyF) of the
+C                           centres of two distinct cells are about
+C                           0.5*(s_from + s_to) apart along the
+C                           move, and MIN(dxF,dyF) of the
 C                           destination is at most s_to, so the
-C                           ratio is at least 1 + s_from/s_to. The
+C                           ratio is about 1 + s_from/s_to.
+C                           "About", not "at least": for a zonal
+C                           move the great-circle distance is a
+C                           little SHORTER than the along-parallel
+C                           spacing (0.99995 of it at 77N with a
+C                           2 degree step), which is exactly why
+C                           lab_sea below measures 1.999904 rather
+C                           than 2. The
 C                           measured floor over EVERY ordered pair
 C                           of distinct cells is 1.779673 on cs32
 C                           (37,742,592 pairs) and 1.999904 on
 C                           lab_sea, so no corruption of a single
 C                           target_cell - by one cell or by any
 C                           other amount - can evade the check on
-C                           either grid.
+C                           either grid. Those two numbers do not
+C                           depend on rSphere: the margin is a
+C                           ratio of two lengths that both scale
+C                           with it, so a consistent change cancels
+C                           (6370 and 6371 km both give 1.779673 on
+C                           cs32). Only a MISMATCH moves it, by the
+C                           ratio of the two radii, so whoever
+C                           re-measures this has to take the
+C                           coordinates and the spacing from the
+C                           same grid dump.
 C                           MIN, not MAX, of the two spacings is
 C                           necessary rather than merely cautious:
 C                           under MAX the margin of a one-cell zonal

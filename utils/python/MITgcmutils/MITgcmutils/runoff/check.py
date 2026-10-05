@@ -914,7 +914,7 @@ def _check_aliases(ctx):
 
 
 def _check_targets(ctx):
-    """T01-T08."""
+    """T01-T09."""
     ds = ctx.ds
     if not all(ctx.ok.get(v) for v in ("target_source", "target_cell", "target_fraction")):
         return
@@ -1005,6 +1005,28 @@ def _check_targets(ctx):
             k = int(np.nonzero(unsorted)[0][0]) + 1
             ctx.add("T08", "targets are not sorted by source and then cell (first "
                     "out of order: target row {0})".format(k), "target_source")
+    # T09: the optional geometry columns have to be finite numbers, because
+    # RNF_INIT_FIXED stops the run on a value that is not one. It compares
+    # target_cell_area with rA and target_lon/target_lat with XC/YC as a
+    # negated .LE., so a NaN or an Inf is refused rather than accepted. The
+    # test is on the stored values, which is what the Fortran reads; a fill
+    # marker is a finite number and is left to S09, R02 and R03.
+    for name in ("target_cell_area", "target_lon", "target_lat"):
+        if not ctx.ok.get(name):
+            continue
+        var = ds.variables[name]
+        raw = np.asarray(var[:])
+        if raw.dtype.kind not in "fiu":
+            continue
+        values = raw.astype(np.float64)
+        with np.errstate(invalid="ignore"):
+            bad = ~np.isfinite(values)
+        ctx.add_many("T09", name, np.nonzero(bad)[0], lambda k, nm=name,
+                     vals=values: {
+            "text": "{0}: {1}={2} is not a finite number; the model stops the "
+                    "run on it".format(ctx.target(k), nm,
+                                       _value_label(vals[k], False)),
+            "source_index": ts[k] if src_ok[k] else None})
 
 
 def _check_time(ctx):
