@@ -725,9 +725,15 @@ C              from the file only when a message needs it.
      &                  kTopC(iLoc,j,bi,bj).NE.0 ) THEN
                 refuse = 3
 #endif /* ALLOW_SHELFICE */
-               ELSEIF ( hasArea .AND. ABS( areaF
-     &                  - rA(iLoc,j,bi,bj) ) .GT.
-     &                  RNF_areaTol*rA(iLoc,j,bi,bj) ) THEN
+               ELSEIF ( hasArea .AND. .NOT.( ABS( areaF
+     &                  - rA(iLoc,j,bi,bj) ) .LE.
+     &                  RNF_areaTol*rA(iLoc,j,bi,bj) ) ) THEN
+C-             Negated .LE., not .GT., so that an area that is not a
+C              number is refused instead of compared: every
+C              comparison with a NaN is false, so the .GT. form
+C              would accept it. Same shape as the fraction test
+C              above. (Pre-existing form, corrected with the
+C              cell-centre test below, which had the same hole.)
                 refuse = 4
                ELSEIF ( RNF_lonLatChk ) THEN
 C-             The cell centre the file states must be the centre of
@@ -752,10 +758,26 @@ C              the Earth, against a threshold of half a cell.
 C-             The owning cell's own spacing sets the scale, so one
 C              constant serves every resolution. MIN of the two
 C              directions keeps the test independent of how the grid
-C              axes are turned against north on a cubed sphere.
+C              axes are turned against north on a cubed sphere, and
+C              it is necessary, not just cautious: under MAX a
+C              one-cell zonal move on a 1-degree global lat-lon grid
+C              would have margin 2*cos(lat), 0.035 at 89N, and be
+C              accepted. See RNF.h for the measured margin floor
+C              over every ordered pair of cells (1.78 cs32,
+C              2.00 lab_sea), which is what makes a single corrupted
+C              target_cell impossible to hide.
                 tolDist = RNF_lonLatTol
      &                   *MIN( dxF(iLoc,j,bi,bj), dyF(iLoc,j,bi,bj) )
-                IF ( gcDist .GT. tolDist ) refuse = 5
+C-             Negated .LE., not .GT.: a coordinate that is not a
+C              number has to be refused, not accepted. NaN survives
+C              MIN(1,MAX(-1,NaN)) and ACOS(NaN), and every
+C              comparison with it is false, so the .GT. form let a
+C              target with a NaN centre through while the summary
+C              still reported that the check had run - and whether
+C              it did was build-dependent, refused at -O3 and
+C              accepted at -O0. Same shape as the fraction test
+C              above, which has always been written this way.
+                IF ( .NOT.( gcDist .LE. tolDist ) ) refuse = 5
                ENDIF
                IF ( refuse .NE. 0 ) THEN
                 nErrTgt = nErrTgt + 1

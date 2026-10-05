@@ -48,15 +48,43 @@ C     RNF_areaTol        :: relative tolerance between the cell area
 C                           stored in the file and rA
 C     RNF_lonLatTol      :: tolerance between the cell centre stored
 C                           in the file (target_lon, target_lat) and
-C                           the owning cell's XC,YC, as a fraction of
-C                           that cell's own grid spacing. 0.5 means
-C                           "the stored centre has to lie inside the
-C                           owning cell", which is the weakest test
-C                           that still rejects a one-cell move: a
-C                           target moved to a neighbour is a whole
-C                           spacing away, twice this threshold. The
-C                           threshold scales with the local cell, so
-C                           it needs no retuning between grids
+C                           the owning cell's XC,YC, as a fraction
+C                           of that cell's own spacing
+C                           MIN(dxF,dyF). 0.5 means "the stored
+C                           centre has to lie inside the owning
+C                           cell".
+C                           The margin of a corrupted target_cell is
+C                           the distance between the two centres
+C                           over this threshold. It is NOT 2 in
+C                           general: 1 + spacing(from)/spacing(to)
+C                           holds only where the spacing is locally
+C                           uniform, and at the cs32 facet corner
+C                           dxF jumps from 120208 to 156359 m, where
+C                           the margin is 1.78. What does hold is
+C                           that the margin is strictly above 1 on
+C                           any grid with positive cell sizes: the
+C                           centres of two distinct cells are at
+C                           least 0.5*(s_from + s_to) apart along
+C                           the move, and MIN(dxF,dyF) of the
+C                           destination is at most s_to, so the
+C                           ratio is at least 1 + s_from/s_to. The
+C                           measured floor over EVERY ordered pair
+C                           of distinct cells is 1.779673 on cs32
+C                           (37,742,592 pairs) and 1.999904 on
+C                           lab_sea, so no corruption of a single
+C                           target_cell - by one cell or by any
+C                           other amount - can evade the check on
+C                           either grid.
+C                           MIN, not MAX, of the two spacings is
+C                           necessary rather than merely cautious:
+C                           under MAX the margin of a one-cell zonal
+C                           move on a 1-degree global lat-lon grid
+C                           is 2*cos(lat), i.e. 0.347 at 80N and
+C                           0.035 at 89N, so MAX would defeat the
+C                           guard on every high-latitude row.
+C                           Because both sides scale with the local
+C                           cell, the one constant needs no
+C                           retuning between grids or resolutions
 C     RNF_fluxMax        :: a flux above this value in absolute terms
 C                           counts as a missing value (not allowed)
 C     RNF_idLen          :: length of a source id in the model

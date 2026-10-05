@@ -1524,7 +1524,8 @@ def _check_grid(ctx, grid):
         g = field2d(gname)
         if g is None:
             continue
-        # Not model-read, so it may be packed: compare unpacked degrees.
+        # The model reads these two only to check them and uses no stored
+        # value, so they may be packed: compare unpacked degrees.
         v = _unpacked(ctx.ds.variables[vname])
         with np.errstate(invalid="ignore"):
             d = v[rows] - g[cells[rows]]
