@@ -84,8 +84,8 @@ C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
       DO iTr = 1, RNF_nTr
         WRITE(diagName,'(A,I2.2,A)') 'RNFtr', iTr, ' '
         WRITE(diagTitle,'(A,I3,A)')
-     &    'Runoff tracer tendency term of pkg/rnf, runoff tracer',
-     &    iTr, ' (see RNF_SUMMARY for its name)'
+     &    'pkg/rnf tendency term of runoff tracer',
+     &    iTr, ', named by RNF_SUMMARY'
         diagUnits = 'tracer units/s  '
         diagCode  = 'SMR     MR      '
         CALL DIAGNOSTICS_ADDTOLIST( diagNum,
