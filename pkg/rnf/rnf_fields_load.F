@@ -144,10 +144,15 @@ C--   Trace of the record selection, which is what the sparse timing
 C     check reads (tests/runoff/lab_sea_runoff_timing_check.py): at
 C     debLevC and above every step, below that only when the bracket
 C     moves, so that a long run does not fill its log.
+C     The two reals are printed with 17 significant digits, which is
+C     what a real*8 needs to be read back as the same number: the
+C     applied-field oracle rebuilds fac*flux0 + (1-fac)*flux1 from this
+C     line and compares the result bitwise, so a shorter field would
+C     make it disagree by round-off (measured 2e-15 with 14 digits).
       IF ( RNF_debugLev.GE.debLevC .OR.
      &     ( RNF_debugLev.GE.debLevB .AND.
      &       ( first .OR. changed ) ) ) THEN
-        WRITE(msgBuf,'(A,I10,A,I6,A,I6,A,I6,A,I6,A,1PE21.13,A,E21.13)')
+        WRITE(msgBuf,'(A,I10,A,I6,A,I6,A,I6,A,I6,A,1PE25.16,A,E25.16)')
      &    ' RNF_FIELDS_LOAD: it=', myIter,
      &    ', rec0=', count0, ', yr0=', year0,
      &    ', rec1=', count1, ', yr1=', year1,

@@ -1,0 +1,20 @@
+# Sparse runoff package parameters (pkg/rnf)
+#
+# The same runoff as the dense case input.rnof_yearly, in sparse form:
+# one file per year, runoff_sparse_1978.nc and
+# runoff_sparse_1979.nc, 365 daily records each, the first
+# at 1 January 00:00. RNF_useYearlyFiles is the one setting
+# a sparse file cannot carry itself, so data.rnf gives it;
+# RNF_file is the base name and the reader reads
+# <base>_YYYY.nc.
+#
+# The file is written by ../input.rnof_const/gen_sparse.py from the
+# dense records of input.rnof_yearly and is read from that directory,
+# so both cases force the model with the same runoff. Apart from
+# RNF_useYearlyFiles, every timing value the reader needs comes from
+# the time axis of the file, which is what this case checks; data.rnf
+# overrides none of them.
+ &RNF_PARM01
+  RNF_file = '../input.rnof_yearly/runoff_sparse.nc',
+  RNF_useYearlyFiles = .TRUE.,
+ &

@@ -1,0 +1,16 @@
+# Sparse runoff package parameters (pkg/rnf)
+#
+# The same runoff as the dense case input.rnof_month1, in sparse form:
+# 6 consecutive calendar months from December 1978, not
+# repeated: mitgcm_time_sampling = "monthly" with
+# mitgcm_time_repeat = "none", which is exf's
+# runoffperiod = -1.
+#
+# The file is written by ../input.rnof_const/gen_sparse.py from the
+# dense records of input.rnof_month1 and is read from that directory,
+# so both cases force the model with the same runoff. Every timing
+# value the reader needs comes from the file's own time axis, which is
+# what this case checks; data.rnf overrides nothing.
+ &RNF_PARM01
+  RNF_file = '../input.rnof_month1/runoff_sparse.nc',
+ &

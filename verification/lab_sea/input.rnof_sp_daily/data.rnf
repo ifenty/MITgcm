@@ -1,0 +1,15 @@
+# Sparse runoff package parameters (pkg/rnf)
+#
+# The same runoff as the dense case input.rnof_daily, in sparse form:
+# 40 daily records from 1 January 1979 00:00, not repeated:
+# the file says mitgcm_time_sampling = "fixed",
+# mitgcm_time_period = 86400 and mitgcm_time_repeat = "none".
+#
+# The file is written by ../input.rnof_const/gen_sparse.py from the
+# dense records of input.rnof_daily and is read from that directory,
+# so both cases force the model with the same runoff. Every timing
+# value the reader needs comes from the file's own time axis, which is
+# what this case checks; data.rnf overrides nothing.
+ &RNF_PARM01
+  RNF_file = '../input.rnof_daily/runoff_sparse.nc',
+ &
