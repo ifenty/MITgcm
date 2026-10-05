@@ -753,7 +753,10 @@ C     attribute that exists but is not one number also stops the run,
 C     in RNF_NC_ATT_REAL. A missing temperature is allowed and means
 C     "this source enters at the reference temperature"; it is
 C     recorded in RNF_bufTvld and leaves the source out of (mT) and
-C     m_T (package design, decision 3).
+C     m_T (package design, decision 3). Each series reports its own
+C     missing values and how many of them in RNF_NC_READ_ONE; this
+C     routine only ends the run afterwards, so that one read reports
+C     every series rather than stopping at the first.
 C
 C     Called by the master thread, which opens and closes the file.
 
@@ -899,11 +902,9 @@ C     are copied out right after the read.
       CALL RNF_NC_ERROR( 'RNF_NC_READ_FLUX', 'closing the file',
      &     errNC, myThid )
 
+C--   Each series has already said how many values of its own were
+C     missing, and which, so this only ends the run.
       IF ( nBad .GE. 1 ) THEN
-        WRITE(msgBuf,'(A,I8,2A)') 'RNF_NC_READ_FLUX: RNF:', nBad,
-     &    ' missing value(s) of the runoff time series',
-     &    ' (not allowed)'
-        CALL PRINT_ERROR( msgBuf, myThid )
         CALL ALL_PROC_DIE( 0 )
         STOP 'ABNORMAL END: S/R RNF_NC_READ_FLUX'
       ENDIF
@@ -948,7 +949,11 @@ C     contract; runoff schema 1.0, section 3.5).
 C
 C     nBad and nMsg are carried across the series of one record, so
 C     that one read reports every missing value it found and one
-C     process still prints at most RNF_maxErrMsg of them.
+C     process still prints at most RNF_maxErrMsg of them. The count
+C     line this routine prints at the end is per series and names it:
+C     one read covers every series of a record, so a count of the
+C     record as a whole would say how many values were lost and not of
+C     what. The caller stops the run once every series has reported.
 C
 C     Called by the master thread, with the file already open.
 
@@ -999,7 +1004,7 @@ C !FUNCTIONS: ==========================================================
 
 C !LOCAL VARIABLES: ====================================================
       INTEGER bi, bj, k, n, iV
-      INTEGER iSrc0, nLoc, nChunk, iChunk
+      INTEGER iSrc0, nLoc, nChunk, iChunk, nBad0
       CHARACTER*(MAX_LEN_MBUF) msgBuf
       CHARACTER*(RNF_idLen) srcId
       INTEGER idLen
@@ -1016,6 +1021,7 @@ C !LOCAL VARIABLES: ====================================================
 CEOP
 
       valSum = 0. _d 0
+      nBad0 = nBad
       iV = MAX( 1, ILNBLNK(varNam) )
       DO bj = 1, nSy
        DO bi = 1, nSx
@@ -1125,6 +1131,16 @@ C-      hand the chunk to every tile that needs part of it
          ENDDO
         ENDDO
       ENDDO
+
+C--   How many values of THIS series were missing when they may not be.
+C     The count is per series, and names it, because one read covers
+C     every series of a record: a count of the record as a whole would
+C     say how many values were lost and not of what.
+      IF ( nBad .GT. nBad0 ) THEN
+        WRITE(msgBuf,'(2A,I8,3A)') caller, ': RNF:', nBad-nBad0,
+     &    ' missing value(s) of ', varNam(1:iV), ' (not allowed)'
+        CALL PRINT_ERROR( msgBuf, myThid )
+      ENDIF
 #endif /* HAVE_NETCDF */
 
 #endif /* ALLOW_RNF */
