@@ -8,6 +8,14 @@
 #
 # The timing parameters are left unset: the file says
 # mitgcm_time_sampling = "constant".
+#
+# RNF_debugLev = 3 (debLevC) makes RNF_FIELDS_LOAD print, at every step,
+# the two records it bracketed, the file year of each and the weight of
+# the earlier one. That trace is what the sparse timing check reads from
+# this run directory (tests/runoff/lab_sea_runoff_timing_check.py); here
+# it has to report record 1 with weight 1 at every step. It only prints
+# and changes no value.
  &RNF_PARM01
   RNF_file = '../input.rnof_const/runoff_sparse.nc',
+  RNF_debugLev = 3,
  &
