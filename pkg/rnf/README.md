@@ -20,11 +20,16 @@ defined, and a build with NetCDF.
 
 ## Status
 
-The volume flux works, in every time mode. The package
+The volume flux works, in every time mode, and so do the temperature, the
+salinity and the passive tracers. The package
 reads the file, places its target cells on the tiles of each process, checks
 the file and the targets, selects the time records that bracket the model
-time and assigns the exf `runoff` field at every step. Temperature, salinity
-and tracers are not applied yet.
+time, assigns the exf `runoff` field at every step and adds the heat, the salt
+and the tracer of the runoff as tendency terms at the target cells.
+What is not there yet: the diagnostics of the input fields and the monitor
+(`RNF_MONITOR`), the budget checks over time and over the domain, the adjoint
+(TAF) list files, and the `addMass` path that interior and under-shelf
+targets need.
 
 **Time modes.** `constant` (one record), a fixed period with or without a
 repeat cycle, a monthly climatology (12 records, January to December,
@@ -45,22 +50,23 @@ the year.
 | File | Content | State |
 |---|---|---|
 | `RNF_OPTIONS.h` | CPP options | no option yet |
-| `RNF_SIZE.h` | array bounds | `RNF_nSrcTile` 2000, `RNF_nTgtTile` 10000, `RNF_nBuf` 1000; a count above a bound stops the run and prints the value needed |
-| `RNF.h` | parameters, per-tile lists and dense fields in common blocks | done for the volume flux |
+| `RNF_SIZE.h` | array bounds | `RNF_nSrcTile` 2000, `RNF_nTgtTile` 10000, `RNF_nBuf` 1000, `RNF_nTr` 5; a count above a bound stops the run and prints the value needed |
+| `RNF.h` | parameters, per-tile lists, record buffers and dense fields in common blocks | done |
 | `rnf_readparms.F` | reads `data.rnf`; refuses a blank `RNF_file` and a build without NetCDF | done |
 | `rnf_check.F` | the other configuration refusals | done |
 | `rnf_summary.F` | prints the parameters, the bounds and what the read found | done |
-| `rnf_nc_utils.F` | NetCDF helpers, all inside `#ifdef HAVE_NETCDF` | done for the static read and the flux record |
+| `rnf_nc_utils.F` | NetCDF helpers, all inside `#ifdef HAVE_NETCDF`; `RNF_NC_SERIES` finds the optional time series and matches the tracer names, `RNF_NC_READ_FLUX` reads one record of every series and `RNF_NC_READ_ONE` one series of it | done |
 | `rnf_init_fixed.F` | static read of the file, placement of targets on tiles, file and target checks, fraction sums | done |
 | `rnf_time_setup.F` | resolves the file's time axis and the `data.rnf` overrides into exf's period, start time and repeat cycle | done |
 | `rnf_getrec.F` | `RNF_GETREC` (the two records bracketing the model time and the weight, from the pkg/exf routine of the mode, plus hold-exact) and `RNF_FILE_NAME` (`<base>_YYYY.nc`) | done |
 | `rnf_init_varia.F` | zeroes the fields, empties the record buffers, loads the records of the start time and reports the flux | done |
-| `rnf_fields_load.F` | selects the records, reads the ones no buffer holds, interpolates or holds, builds the dense fields; traces the selection at `RNF_debugLev` ≥ 3 | done |
+| `rnf_fields_load.F` | `RNF_FIELDS_LOAD` decides the two time levels; `RNF_LOAD_AT` selects the records, reads the ones no buffer holds, interpolates or holds every series and builds the dense fields, tracing the selection at `RNF_debugLev` ≥ 3; `RNF_COPY_APPLY`/`RNF_ZERO_APPLY` keep the set the tendency terms read | done |
 | `rnf_exf_runoff.F` | assigns the exf `runoff` field | done |
-| `rnf_tendency_apply.F` | `RNF_TENDENCY_APPLY_T`, `_S` and `_PTR` | do nothing yet |
+| `rnf_tendency_apply.F` | `RNF_TENDENCY_APPLY_T`, `_S` and `_PTR`: the heat, salt and tracer terms at the target level | done |
+| `rnf_diagnostics_init.F` | registers `RNFgT`, `RNFgS` and `RNFtrNN`, the diagnostics of those terms | done; the input-only diagnostics and the monitor are not |
 
-Temperature, salinity, passive tracers,
-diagnostics, the monitor and the adjoint (TAF) list files are not there yet.
+The monitor (`RNF_MONITOR`), the diagnostics of the input fields and the
+adjoint (TAF) list files are not there yet.
 
 ## Parameters
 
@@ -76,9 +82,9 @@ namelist `RNF_PARM01`:
 | `RNF_period` | unset | period override: 0 constant, > 0 seconds, -12 monthly climatology, -1 monthly |
 | `RNF_repCycle` | unset | repeat cycle override (s) |
 | `RNF_useYearlyFiles` | `.FALSE.` | append `_YYYY` to `RNF_file` by model year |
-| `RNF_useTemp` | `.TRUE.` | apply the runoff temperature if the file has it — **inert**, see below |
-| `RNF_useSalt` | `.TRUE.` | apply the runoff salinity if the file has it — **inert**, see below |
-| `RNF_usePtracers` | `.TRUE.` | apply the runoff tracers if the file has them — **inert**, see below |
+| `RNF_useTemp` | `.TRUE.` | apply `runoff_temperature` if the file has it; false treats it as absent |
+| `RNF_useSalt` | `.TRUE.` | apply `runoff_salinity` if the file has it; false treats it as absent |
+| `RNF_usePtracers` | `.TRUE.` | apply `runoff_ptracer_*` if the file has them; false treats them as absent, and their names are then not matched to the ptracers |
 | `RNF_monFreq` | `monitorFreq` | monitor interval (s) |
 | `RNF_debugLev` | `debugLevel` | message level |
 
@@ -92,26 +98,24 @@ the name given is replaced, so `runoff.nc` and `runoff` both select
 file's time is model time in seconds from the reference date of its units;
 with `pkg/cal` it is refused, and the start date comes from the file or from
 `RNF_startDate1`/`RNF_startDate2`, as it does for a dense exf field.
-`RNF_useTemp`, `RNF_useSalt` and `RNF_usePtracers` are still inert (below),
-and `RNF_monFreq` waits for the monitor.
+`RNF_monFreq` waits for the monitor.
 
-**`RNF_useTemp`, `RNF_useSalt` and `RNF_usePtracers` are inert.** The reader
-applies the volume flux only: it does not read `runoff_temperature`,
-`runoff_salinity` or any `runoff_ptracer_*` variable, so setting these
-switches either way changes nothing, and a runoff cell gains water at the
-ambient temperature with no salt and no tracer. So that such a file is not
-accepted silently, `RNF_INIT_FIXED` walks the variables of the file and
-prints, for each of those variables it finds,
+**What the three switches do.** `RNF_INIT_FIXED` reports which of the three
+optional series the file carries and which ptracer each runoff tracer feeds,
+and the summary prints `RNF_hasTemp`, `RNF_hasSalt`, `RNF_nTrUse`,
+`RNF_applyT`, `RNF_applyS` and one line per tracer:
 
 ```
-** WARNING ** RNF_INIT_FIXED: runoff_temperature is in the file but is not applied yet
-** WARNING ** RNF_INIT_FIXED: only the runoff volume flux is applied (RUNOFF-013)
+RNF_SUMMARY: runoff tracer  1 is runoff_ptracer_dye, applied to ptracer  1
 ```
 
-The run continues: the volume is still correct, and the warning says which
-property is missing from the physics. RUNOFF-013 adds the tendency terms, the
-matching of `runoff_ptracer_<NAME>` to `PTRACERS_names` and the refusal of an
-unmatched name, and makes the three switches do what the table says.
+A switch set to false makes the reader treat those variables as absent and say
+so per variable, which is the way to read a file whose tracers this run does
+not carry. `RNF_applyT` and `RNF_applyS` say whether each term can be
+non-zero at all: without `runoff_temperature` the temperature term is
+identically zero, and without `runoff_salinity` the salinity term is zero as
+well as long as `salt_EvPrRn` is 0, which is its default. A file that carries
+only a flux therefore leaves a run bit-for-bit where it was.
 
 The constants fixed by the model contract are in `RNF.h`: `RNF_fracTol`
 (1e-6) on the fraction sum of a source, `RNF_areaTol` (1e-4) between
@@ -138,8 +142,9 @@ Each one stops the run with an error that names the parameter.
 The first two are in `RNF_READPARMS` because they guard the read of the file
 in `RNF_INIT_FIXED`, which the model calls before `RNF_CHECK`.
 
-The file itself is refused in `RNF_INIT_FIXED` (and in `RNF_NC_READ_FLUX` or
-`RNF_NC_ATT_REAL` for the flux record), with a message that names the source
+The file itself is refused in `RNF_INIT_FIXED` (and in `RNF_NC_SERIES`,
+`RNF_NC_READ_FLUX`, `RNF_NC_READ_ONE` or `RNF_NC_ATT_REAL` for the series and
+their records), with a message that names the source
 id, or the table entry where no source can be named:
 
 | Refused | Reason |
@@ -162,7 +167,9 @@ id, or the table entry where no source can be named:
 | `target_fraction` outside [0, 1] | a negative fraction can hide in a sum that is still 1 |
 | a source whose fractions do not sum to 1 within `RNF_fracTol` | mass would be lost; this is also how a target that no tile owns is caught (a blank exch2 tile, or a cell no facet uses) |
 | a target on land, beyond an open boundary (`maskInC` = 0), under an ice shelf (`kTopC` ≠ 0), or whose `target_cell_area` differs from `rA` by more than `RNF_areaTol` | the volume would be lost, or the file was built for another grid |
-| a missing flux: not a number, above `RNF_fluxMax`, or equal to the `_FillValue` or `missing_value` of `runoff_flux` | the model contract does not allow a missing flux |
+| a missing value of `runoff_flux`, of `runoff_salinity` or of a tracer: not a number, above `RNF_fluxMax`, or equal to the `_FillValue` or `missing_value` of that variable | the model contract allows no missing flux, and a missing salinity or tracer has no defined meaning. A missing `runoff_temperature` **is** allowed: that source enters at the reference temperature, as a source without the variable does |
+| a `runoff_ptracer_<NAME>` whose `<NAME>` matches no `PTRACERS_names` entry, or more than one, or any such variable in a run that does not use pkg/ptracers | there is no tendency array to add it to, so the water would arrive without the tracer and nothing would say so. `RNF_usePtracers=.FALSE.` is the way to read such a file on purpose |
+| more `runoff_ptracer_*` variables than `RNF_nTr`, or a name that is empty or longer than `RNF_idLen` | the message prints the number the file has |
 | a count above `RNF_nSrcTile` or `RNF_nTgtTile` on one tile | the message prints the value the bound needs |
 
 Every process reads the whole file, so the refusals of the header, of a table
@@ -190,7 +197,11 @@ every entry was accepted, and the log says so.
 
 Both files are written by
 `verification/lab_sea/input.rnof_const/gen_sparse.py`. The development
-repository holds the refusal and placement checks.
+repository holds the refusal and placement checks, the cell-by-cell
+applied-field and timing checks, and the two checks of the tendency terms:
+one against the analytic value of every case of the design's reference
+tables, and one against the heat that `pkg/exf` applies through its own
+`runoftempfile` path, cell by cell.
 
 ## Design
 
