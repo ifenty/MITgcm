@@ -350,21 +350,17 @@ C-        a missing calendar means "standard", as in CF
           ELSEIF ( unitTxt(1:iL).EQ.'360_day' ) THEN
             calOk = usingModelCalendar
           ELSE
-            WRITE(msgBuf,'(3A)') 'RNF_TIME_SETUP: RNF: the calendar',
-     &        ' of the time axis, "', unitTxt(1:iL)
-            CALL PRINT_ERROR( msgBuf, myThid )
-            WRITE(msgBuf,'(2A)') 'RNF_TIME_SETUP: ", is not one of',
+            WRITE(msgBuf,'(4A)') 'RNF_TIME_SETUP: RNF: calendar "',
+     &        unitTxt(1:iL), '" of the time axis is not one of',
      &        ' standard/gregorian, noleap/365_day, 360_day'
             CALL PRINT_ERROR( msgBuf, myThid )
             errCount = errCount + 1
             RETURN
           ENDIF
           IF ( .NOT.calOk ) THEN
-            WRITE(msgBuf,'(3A)') 'RNF_TIME_SETUP: RNF: the file is on',
-     &        ' the calendar "', unitTxt(1:iL)
-            CALL PRINT_ERROR( msgBuf, myThid )
-            WRITE(msgBuf,'(2A)') 'RNF_TIME_SETUP: ", which is not',
-     &        ' the calendar of this run (data.cal, TheCalendar)'
+            WRITE(msgBuf,'(4A)') 'RNF_TIME_SETUP: RNF: calendar "',
+     &        unitTxt(1:iL), '" of the time axis is not the calendar',
+     &        ' of this run (data.cal, TheCalendar)'
             CALL PRINT_ERROR( msgBuf, myThid )
             errCount = errCount + 1
             RETURN
@@ -517,7 +513,7 @@ C-        pkg/cal counts from 15 October 1582 (pkg/cal/cal_set.F), so
 C         an earlier reference date cannot be converted. A constant
 C         file carries 0001-01-01 and never reaches this point; a
 C         timed file that does has to say its start date in data.rnf.
-          WRITE(msgBuf,'(A,I9,A)') 'RNF_TIME_SETUP: RNF: the',
+          WRITE(msgBuf,'(2A,I9,A)') 'RNF_TIME_SETUP: RNF: the',
      &      ' reference date of time:units,', refDat1,
      &      ', precedes the'
           CALL PRINT_ERROR( msgBuf, myThid )
