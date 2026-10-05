@@ -136,8 +136,12 @@ C  nNum, num            :: integers scanned out of the reference date
 #endif /* HAVE_NETCDF */
 CEOP
 
-C--   Nothing resolved yet: a constant single record, which is what a
-C     file without any timing attribute would be.
+C--   Initialized values, so that every path out of this routine leaves
+C     RNF.h defined, including the paths that raise errCount and return
+C     early. They are not a fallback: a file that carries no
+C     mitgcm_time_sampling is refused below, not read as a constant
+C     single record (case time_sampling_missing of
+C     tests/rnf/refusal_check.py).
       RNF_recPeriod = 0. _d 0
       RNF_recStart  = 0. _d 0
       RNF_recCycle  = 0. _d 0
