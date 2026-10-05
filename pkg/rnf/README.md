@@ -20,11 +20,23 @@ defined, and a build with NetCDF.
 
 ## Status
 
-The volume flux of a file with **one constant record** works. The package
+The volume flux works, in every time mode. The package
 reads the file, places its target cells on the tiles of each process, checks
-the file and the targets, and assigns the exf `runoff` field at every step.
-A file with any other time sampling is refused, and temperature, salinity and
-tracers are not applied yet.
+the file and the targets, selects the time records that bracket the model
+time and assigns the exf `runoff` field at every step. Temperature, salinity
+and tracers are not applied yet.
+
+**Time modes.** `constant` (one record), a fixed period with or without a
+repeat cycle, a monthly climatology (12 records, January to December,
+repeated every model year), consecutive calendar months, and `_YYYY` yearly
+files of a fixed-period series. Record selection is delegated to the pkg/exf
+routine of each mode (`EXF_GetFFieldRec`, `cal_GetMonthsRec`,
+`EXF_GetMonthsRec`), so a sparse run picks records with the code a dense
+`runofffile` run runs. `RNF_holdRecord` is the package's own addition: it
+holds the record whose interval contains the model time instead of
+interpolating. `yearly` *sampling* (one record per calendar year) is refused,
+because exf has no such mode and schema 1.0 puts its time at the midpoint of
+the year.
 
 - With `useRNF=.FALSE.` (the default) the package changes no result.
 - With `useRNF=.TRUE.` and a valid file, a sparse run reproduces the dense
@@ -40,12 +52,14 @@ tracers are not applied yet.
 | `rnf_summary.F` | prints the parameters, the bounds and what the read found | done |
 | `rnf_nc_utils.F` | NetCDF helpers, all inside `#ifdef HAVE_NETCDF` | done for the static read and the flux record |
 | `rnf_init_fixed.F` | static read of the file, placement of targets on tiles, file and target checks, fraction sums | done |
-| `rnf_init_varia.F` | zeroes the fields, reads the one constant record, reports the flux | done for a constant record |
-| `rnf_fields_load.F` | builds the dense fields at each step | done for a constant record; time records to come |
+| `rnf_time_setup.F` | resolves the file's time axis and the `data.rnf` overrides into exf's period, start time and repeat cycle | done |
+| `rnf_getrec.F` | `RNF_GETREC` (the two records bracketing the model time and the weight, from the pkg/exf routine of the mode, plus hold-exact) and `RNF_FILE_NAME` (`<base>_YYYY.nc`) | done |
+| `rnf_init_varia.F` | zeroes the fields, empties the record buffers, loads the records of the start time and reports the flux | done |
+| `rnf_fields_load.F` | selects the records, reads the ones no buffer holds, interpolates or holds, builds the dense fields; traces the selection at `RNF_debugLev` ≥ 3 | done |
 | `rnf_exf_runoff.F` | assigns the exf `runoff` field | done |
 | `rnf_tendency_apply.F` | `RNF_TENDENCY_APPLY_T`, `_S` and `_PTR` | do nothing yet |
 
-Time records and interpolation, temperature, salinity, passive tracers,
+Temperature, salinity, passive tracers,
 diagnostics, the monitor and the adjoint (TAF) list files are not there yet.
 
 ## Parameters
@@ -68,12 +82,18 @@ namelist `RNF_PARM01`:
 | `RNF_monFreq` | `monitorFreq` | monitor interval (s) |
 | `RNF_debugLev` | `debugLevel` | message level |
 
-An unset timing override means the value in the file is used. Of these, only
-`RNF_file` has an effect so far, and `RNF_useYearlyFiles` or an `RNF_period`
-other than 0 stop the run, because only a file with one constant record can
-be read. The others are read, reported by `RNF_SUMMARY` and otherwise unused
-until the time handling, the temperature, salinity and tracer terms, the
-monitor and the debug printing are implemented.
+An unset timing override means the value in the file is used; what the two
+together resolved to is reported by `RNF_SUMMARY` as `RNF_recPeriod`,
+`RNF_recStart`, `RNF_recCycle` and `RNF_recDate1`, `RNF_recDate2`.
+`RNF_useYearlyFiles` is the one setting a file cannot carry itself; with it,
+`RNF_file` is the base name of a `<base>_YYYY.nc` set and a trailing `.nc` of
+the name given is replaced, so `runoff.nc` and `runoff` both select
+`runoff_1979.nc`. `RNF_startTime` is for a run without `pkg/cal`, where the
+file's time is model time in seconds from the reference date of its units;
+with `pkg/cal` it is refused, and the start date comes from the file or from
+`RNF_startDate1`/`RNF_startDate2`, as it does for a dense exf field.
+`RNF_useTemp`, `RNF_useSalt` and `RNF_usePtracers` are still inert (below),
+and `RNF_monFreq` waits for the monitor.
 
 **`RNF_useTemp`, `RNF_useSalt` and `RNF_usePtracers` are inert.** The reader
 applies the volume flux only: it does not read `runoff_temperature`,
@@ -126,7 +146,16 @@ id, or the table entry where no source can be named:
 |---|---|
 | a schema major version other than 1 | the reader knows schema 1 |
 | `mitgcm_grid_nx`, `mitgcm_grid_ny` that differ from the model's global I/O layout, are missing, or are not one number | `target_cell` counts in that layout |
-| `mitgcm_time_sampling` other than `constant`, more than one record, `RNF_useYearlyFiles`, `RNF_period` ≠ 0 | time records are not implemented yet (RUNOFF-005) |
+| `mitgcm_time_sampling` other than `constant`, `fixed` or `monthly` | `yearly` sampling has no pkg/exf mode and schema 1.0 puts its time at the midpoint of the year |
+| `mitgcm_time_repeat` other than `none` or `annual` | schema 1.0 defines only those two |
+| `fixed` sampling without a positive `mitgcm_time_period`, or `fixed` + `annual` without `time_bnds` | the period and the repeat cycle (the span of the bounds) come from them |
+| a repeat cycle that is not the record count times the period | the wrap would select a record the file has not got, or never reach the last records |
+| a monthly climatology that has not 12 records, or whose record 1 is not in January | exf's period −12 is calendar month k in record k, January to December |
+| a `time:units` that is not `<days\|hours\|minutes\|seconds> since <date>`, or a reference date that is not `YYYY-MM-DD[ hh:mm[:ss]]` | the reader converts that date through `pkg/cal` |
+| a reference date before 1583 when `pkg/cal` is used | `pkg/cal` counts from 15 October 1582; give the date of record 1 as `RNF_startDate1`/`RNF_startDate2` instead. A `constant` file carries `0001-01-01` and its time axis is never read |
+| a `calendar` that `pkg/cal` has not got, or that is not this run's | the record times were computed on another calendar |
+| `RNF_startTime` with `pkg/cal`, or `RNF_startDate*` without it, or a monthly period without it, or `RNF_useYearlyFiles` without it | the same rules a dense exf field follows |
+| a record outside the time dimension of the file being read | the series does not cover the model time: it needs more records, a repeat cycle, or another period |
 | a missing dimension (`time`, `source`, `target`) or variable (`source_id`, `target_source`, `target_cell`, `target_fraction`, `runoff_flux`), or `runoff_flux` not dimensioned `(time, source)` | required input |
 | `target_source` or `target_cell` out of range | an out-of-range index would be placed on a tile by the integer division, or silently dropped |
 | `target_level` ≠ 1 | schema 1.0 allows only the surface cell |

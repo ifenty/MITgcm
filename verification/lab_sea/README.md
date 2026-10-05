@@ -191,8 +191,8 @@ Six more secondary forward tests add `pkg/exf` runoff to the primary test, one f
 each way `pkg/exf` can time a dense `runoffFile`. Each `input.rnof_<X>/` holds only the
 files that differ from `input/`: `data.exf`, `data` (run length), `data.cal` when the
 start date changes, the runoff file or files, and the script `gendata.py` that wrote them.
-A seventh test, `input.rnof_sp_const`, applies the runoff of the constant case through
-the sparse-runoff package `pkg/rnf` instead ("Sparse form of the runoff" below).
+Six more tests, `input.rnof_sp_<X>`, apply the same runoff through the sparse-runoff
+package `pkg/rnf` instead, one per timing mode ("Sparse form of the runoff" below).
 
 | Test | Runoff timing | `data.exf` settings | Run (first step to last step) |
 | --- | --- | --- | --- |
@@ -253,14 +253,29 @@ sparse-runoff NetCDF file for `pkg/rnf`, organised by source: `runoff_sparse.nc`
 tests the cells of a group vary differently in time, so each of the seven cells is its
 own source.
 
-`input.rnof_sp_const` is the sparse test: the set-up of `input.rnof_const` with
-`useRNF = .TRUE.` in `data.pkg`, a blank `runoffFile` in `data.exf` and a `data.rnf`
-naming `../input.rnof_const/runoff_sparse.nc`. `pkg/rnf` places the seven target cells
-on the tiles and fills the exf `runoff` field, so the test must reproduce the dense
-run; its reference `results/output.rnof_sp_const.txt` is a copy of
-`results/output.rnof_const.txt`. One source (`baffin`) spans the boundary between two
-tiles and, with `-mpi 2`, between the two processes. The other sparse files are read by
-no test yet (they need the time handling).
+`input.rnof_sp_<X>` is the sparse test of case `<X>`, for each of the six: the
+set-up of `input.rnof_<X>` with `useRNF = .TRUE.` in `data.pkg`, a blank
+`runoffFile` in `data.exf` with its four dense `runoff*` timing settings removed, and
+a `data.rnf` naming `../input.rnof_<X>/runoff_sparse.nc`. Every timing value the
+reader needs comes from the time axis of that file; the only exception is
+`RNF_useYearlyFiles = .TRUE.` in `input.rnof_sp_yearly`, which no file can carry.
+Each also sets `RNF_debugLev = 3`, so the run prints one line per forcing step
+naming the two records it bracketed and the weight — the trace that
+`tests/runoff/lab_sea_runoff_timing_check.py` compares with the exf conventions.
+In `input.rnof_sp_const` one source (`baffin`) spans the boundary between two tiles
+and, with `-mpi 2`, between the two processes.
+
+`results/output.rnof_sp_const.txt` is a copy of `results/output.rnof_const.txt`, so
+that case is a direct sparse = dense comparison. **The five timed cases have their
+own reference instead**, taken from their own single-process run: the sparse applied
+runoff field equals the dense one to 4.3e-16 at every forcing step of all five, but
+lab_sea amplifies that round-off over a month of sea ice into 4, 16, 3, 16 and 4
+matching digits of `cg2d_init_res` for daily, month, month1, clim and yearly, so the
+dense reference cannot serve as their oracle. The sparse = dense property is checked
+directly instead, on the applied field and on the record selection, by the project's
+`tests/rnf/timing_field_check.py` and `tests/runoff/lab_sea_runoff_timing_check.py`;
+each own reference is matched at 16 digits by the single-process and the `-mpi 2`
+run.
 
 To regenerate the sparse files, and the sparse runoff of
 `global_ocean.cs32x15/input.rnof_sparse/` and
