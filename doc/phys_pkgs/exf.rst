@@ -227,8 +227,12 @@ General flags and parameters
 :code:`useRNF = .TRUE.`, because a sparse point source of pkg/rnf puts a whole
 river into one grid cell and exceeds that bound by construction: 1000
 m\ :sup:`3`/s into a single 2 km cell is 2.5 x 10\ :sup:`--4` m/s. pkg/rnf
-bounds the volume flux of each source itself instead, and reports which bound
-applies in its own parameter summary. Because :code:`EXF_GETFORCING` subtracts
+bounds two things of its own instead, and reports both in its own parameter
+summary: the volume flux of each source, as each record is read, and the
+share of a target cell's top-layer volume that one time step of runoff may
+add, on the field it hands to this array. The second is the per-cell bound a
+rate in m/s cannot express on every grid, and it is dimensionless for that
+reason. Because :code:`EXF_GETFORCING` subtracts
 :code:`runoff` into :code:`sflux` before calling this routine, the
 :code:`sflux` bound is conditioned on :code:`useRNF` in the same way: it is
 applied to :code:`sflux + runoff`, so what it tests is :code:`evap - precip`,

@@ -177,8 +177,174 @@ C                           which useRNF does not skip - but that test
 C                           runs at nIter0 only, as the bound it sits
 C                           beside did before this change, so the
 C                           sign asymmetry is pre-existing and not
-C                           introduced here; only the magnitude check
-C                           gained per-record coverage
+C                           introduced here; what gained coverage was
+C                           the magnitude - per record here, and per
+C                           cell per step in RNF_cellVolMax below,
+C                           which is what bounds the per-CELL
+C                           aggregate this bound cannot see
+C     RNF_cellVolMax     :: largest share of a target cell's top-layer
+C                           volume that ONE time step of runoff may
+C                           add [1]. RNF_EXF_RUNOFF refuses a cell at
+C                           which
+C                             |RNF_vflx|*deltaTFreeSurf
+C                               > RNF_cellVolMax*drF(ks)*hFacC(..,ks)
+C                           naming the cell (i,j,bi,bj), the applied
+C                           value and the limit in m/s, on every step.
+C                           This is the per-cell companion of
+C                           RNF_srcFluxMax, which is per source and
+C                           per file and so cannot see an aggregate at
+C                           all: four sources each carrying exactly
+C                           RNF_srcFluxMax with every target on one
+C                           lab_sea cell apply 1.285228E-3 m/s and the
+C                           run ended normally, with no message of any
+C                           kind, before this check existed (measured
+C                           on RUNOFF-030 by review B, re-measured on
+C                           RUNOFF-040 against the committed build:
+C                           exit 0, "Execution ended Normally", 0 EXF
+C                           WARNING lines, one non-zero cell, applied
+C                           1.2852284E-03 m/s at (i,j) = (12,2)).
+C                           THE QUANTITY. The bound is on the
+C                           dimensionless ratio
+C                             f(c) = |runoff(c)|*deltaTFreeSurf
+C                                    / ( drF(ks)*hFacC(c,ks) )
+C                           i.e. the depth of water one step of runoff
+C                           puts on the cell over the thickness of the
+C                           cell it goes into. With a real freshwater
+C                           flux f is the fractional change of the
+C                           top-cell volume in that step: the runoff
+C                           reaches etaN through EmPmR and dEtaHdt and
+C                           is integrated with deltaTFreeSurf
+C                           (model/src/integr_continuity.F:221). With
+C                           a linear free surface no volume moves and
+C                           f is instead the fractional freshwater
+C                           dilution the surface tracer forcing
+C                           applies in that step; the model linearises
+C                           the exact dilution h/(h+dh) = 1/(1+f) to
+C                           1-f, whose relative error is exactly f^2.
+C                           Being dimensionless is the point: ONE
+C                           number serves every grid, resolution and
+C                           time step, which is what the pkg/exf
+C                           runoff bound of 1.E-6 m/s could not do and
+C                           why it had to be skipped.
+C                           WHERE 0.2 COMES FROM. It is MITgcm's own
+C                           threshold for the size of the surface
+C                           cell: hFacInf = 0.2 and hFacSup = 2.0
+C                           (defaults in
+C                           model/src/set_defaults.F:258-259,
+C                           described at model/inc/PARAMS.h:762 as
+C                           "Threshold (inf and sup) for fraction size
+C                           of surface cell"), outside which
+C                           CALC_SURF_DR (model/src/calc_surf_dr.F:
+C                           92-98) and CALC_R_STAR
+C                           (model/src/calc_r_star.F:185-238) warn.
+C                           The SMALLER of the two departures from
+C                           drF(ks) that the model itself treats as
+C                           remarkable is hFacInf = 0.2, and that is
+C                           taken here as the limit on what a single
+C                           step of runoff may do: a step that moves
+C                           the surface cell by more than that crosses
+C                           the model's own tolerance band before the
+C                           free surface has a step in which to
+C                           respond, and at f = 0.2 the linearised
+C                           dilution above is already 4% wrong. The
+C                           value is a fixed constant and not a
+C                           data.rnf parameter, as RNF_srcFluxMax is:
+C                           the dimensionless form needs no retuning
+C                           per grid, so a run-time scalar would be
+C                           cost without benefit.
+C                           WHAT IT IS ON EACH GRID (measured):
+C                           o lab_sea (rA = 3.112287E10 m^2,
+C                             drF(1) = 10 m, deltaTFreeSurf = 3600 s):
+C                             5.5556E-4 m/s, i.e. 1.729E7 m^3/s into
+C                             that cell, 82 Amazons;
+C                           o cs32 (drF(1) = 50 m, deltaTFreeSurf =
+C                             86400 s): 1.1574E-4 m/s at EVERY one of
+C                             the 1189 target cells of
+C                             input.rnof_sp_icedyn, because hFacC(1) is
+C                             measured 1.0 at all of them (its
+C                             hFacMinDr of 20 m would allow a thinner
+C                             surface cell, but no target has one). In
+C                             m^3/s that is 1.62E6 (7.7 Amazons) on the
+C                             smallest target cell, rA = 1.4019E10 m^2,
+C                             and 1.03E7 (49 Amazons) on the median,
+C                             rA = 8.8743E10 m^2;
+C                           o a 2 km cell (rA = 4E6 m^2, drF(1) =
+C                             10 m, deltaTFreeSurf = 1200 s):
+C                             1.6667E-3 m/s, i.e. 6.67E3 m^3/s, 0.032
+C                             Amazons.
+C                           A PHYSICALLY CORRECT LARGE RIVER, for
+C                           comparison: the Amazon's 2.1E5 m^3/s is
+C                           f = 2.43E-3 on the lab_sea cell (82 times
+C                           under the bound) and f = 4.09E-3 on the
+C                           median cs32 cell (49 times under), but
+C                           f = 6.3 in ONE
+C                           2 km cell at deltaTFreeSurf = 1200 s - 31
+C                           times OVER. That refusal is correct and
+C                           not a false positive: 6.3 top-layer
+C                           volumes in one step is past hFacSup in the
+C                           first step and is not a configuration the
+C                           model can integrate. What it says is that
+C                           a 2 km grid must spread the Amazon over at
+C                           least 32 cells, which its ~200 km mouth is
+C                           (about 100 cells) - and spreading a source
+C                           over its real cells is what target_fraction
+C                           exists for. Every committed sparse oracle
+C                           is far below: the largest per-cell f over
+C                           every record of every one of them is
+C                           6.72E-4, on cs32, a margin of 297; the
+C                           lab_sea files reach 3.42E-4, a margin
+C                           of 585.
+C                           WHAT IT DOES NOT COVER.
+C                           o It is per cell and per STEP, so it does
+C                             not keep a run physical: a flux just
+C                             under the bound, sustained, still adds
+C                             0.2 of the surface layer every step. It
+C                             refuses the absurd, it does not certify
+C                             the plausible.
+C                           o It sees the sparse field only. Under
+C                             ALLOW_CTRL with ALLOW_GENTIM2D_CONTROL,
+C                             xx_runoff is added to the exf runoff
+C                             array at pkg/exf/exf_getffields.F:531-534,
+C                             AFTER the RNF_EXF_RUNOFF call at :456, so
+C                             neither this bound nor RNF_srcFluxMax
+C                             sees the controlled field. EXF_CHECK_RANGE
+C                             does run after that addition
+C                             (exf_getforcing.F:199 then :348), but of
+C                             its tests on the runoff array the upper
+C                             bound is skipped with useRNF and the
+C                             sflux one has the runoff added back. That
+C                             leaves the negative test - the SIGN, at
+C                             nIter0 - and, only where ALLOW_RUNOFTEMP
+C                             is compiled (cs32 defines it, lab_sea
+C                             does not), a 36 m/s ceiling that the
+C                             runoff-TEMPERATURE test reads from the
+C                             runoff array where it means runoftemp
+C                             (exf_check_range.F, the ALLOW_RUNOFTEMP
+C                             block): an upstream misnaming, not
+C                             conditioned on useRNF, and 6.5E4 times
+C                             above this bound on the lab_sea cell, so
+C                             it constrains nothing in practice.
+C                             Nothing therefore bounds the magnitude of
+C                             xx_runoff; closing that is a pkg/ctrl
+C                             question and not this bound's.
+C                           o It bounds the magnitude only: the
+C                             temperature, the salinity and the tracer
+C                             concentrations the water carries are not
+C                             bounded by it, and neither is the sign
+C                             (see RNF_srcFluxMax above).
+C                           o It cannot tell one wrong source from N
+C                             collapsed ones. It names the CELL, which
+C                             is what locates a collapsed target; the
+C                             sources feeding it are in the file's
+C                             target table.
+C                           o It is blind to a collapse onto a cell
+C                             whose top layer is thick and whose time
+C                             step is short, exactly in proportion to
+C                             drF(ks)*hFacC/deltaTFreeSurf.
+C                           o The thickness used is the reference one,
+C                             drF(ks)*hFacC(ks); with select_rStar the
+C                             live thickness is rStarFacC times that,
+C                             within [hFacInf,hFacSup] of it.
 C     RNF_idLen          :: length of a source id in the model
 C     RNF_maxErrMsg      :: messages one process prints per error
 C                           counter, so that a large file cannot fill
@@ -298,6 +464,8 @@ CEOP
       PARAMETER ( RNF_fluxMax = 1. _d 30 )
       _RL RNF_srcFluxMax
       PARAMETER ( RNF_srcFluxMax = 1. _d 7 )
+      _RL RNF_cellVolMax
+      PARAMETER ( RNF_cellVolMax = 0.2 _d 0 )
       INTEGER RNF_idLen
       PARAMETER ( RNF_idLen = 64 )
       INTEGER RNF_maxErrMsg

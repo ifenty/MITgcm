@@ -24,11 +24,11 @@ C     and one line per runoff tracer report which time series of the
 C     file are applied and which ptracer each tracer feeds, so that a
 C     run never looks as if it carried a property it did not; and
 C     RNF_lagFlds reports which time level the tendency terms use.
-C     RNF_srcFluxMax and the four lines after it report which runoff
-C     bounds the run was held to: EXF_CHECK_RANGE conditions two of its
-C     tests on useRNF, so a log that named neither relaxation nor the
-C     replacement would leave a reader unable to tell which bounds
-C     applied at all.
+C     RNF_srcFluxMax, RNF_cellVolMax and the five lines after them
+C     report which runoff bounds the run was held to: EXF_CHECK_RANGE
+C     conditions two of its tests on useRNF, so a log that named
+C     neither relaxation nor the two package bounds that replace them
+C     would leave a reader unable to tell which bounds applied at all.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -152,16 +152,21 @@ C--   Constants fixed by the model contract
       CALL WRITE_0D_RL( RNF_srcFluxMax, INDEX_NONE,
      &  'RNF_srcFluxMax =',
      &  ' /* largest flux one source may carry [m^3/s] */')
+      CALL WRITE_0D_RL( RNF_cellVolMax, INDEX_NONE,
+     &  'RNF_cellVolMax =',
+     &  ' /* largest share of a cell top-layer volume one step */')
 
 C--   Which runoff bounds this run was actually held to. EXF_CHECK_RANGE
 C     conditions TWO of its tests on useRNF - it skips the runoff upper
 C     bound of 1.E-6 m/s and tests sflux+runoff in place of sflux -
 C     because one sparse point source exceeds both by construction. A
 C     reader of this log would otherwise have no way to tell which
-C     bounds applied, so all four statements are printed: the two
-C     relaxations, the package bound that replaces the first, and the
-C     negative-runoff test that is NOT skipped. Review A of RUNOFF-030
-C     correction round 2 found the freshwater one missing here.
+C     bounds applied, so all five statements are printed: the two
+C     relaxations, the two package bounds that replace them - per
+C     source in RNF_NC_READ_ONE and per cell in RNF_EXF_RUNOFF - and
+C     the negative-runoff test that is NOT skipped. Review A of
+C     RUNOFF-030 correction round 2 found the freshwater one missing
+C     here; the per-cell line is RUNOFF-040.
       WRITE(msgBuf,'(2A)') 'RNF_SUMMARY: pkg/exf skips its runoff',
      &  ' upper bound (1.E-6 m/s) with useRNF=.TRUE.;'
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
@@ -177,6 +182,11 @@ C     correction round 2 found the freshwater one missing here.
      &                    SQUEEZE_RIGHT, myThid )
       WRITE(msgBuf,'(2A)') 'RNF_SUMMARY: the negative-runoff test of',
      &  ' EXF_CHECK_RANGE still applies per cell (at nIter0)'
+      CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
+     &                    SQUEEZE_RIGHT, myThid )
+      WRITE(msgBuf,'(2A,1PE16.8,A)') 'RNF_SUMMARY: RNF_EXF_RUNOFF',
+     &  ' refuses a cell above RNF_cellVolMax =', RNF_cellVolMax,
+     &  ' of its top-layer volume per step'
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )
 

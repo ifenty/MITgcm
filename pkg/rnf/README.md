@@ -121,7 +121,9 @@ The constants fixed by the model contract are in `RNF.h`: `RNF_fracTol`
 (1e-6) on the fraction sum of a source, `RNF_areaTol` (1e-4) between
 `target_cell_area` and `rA`, `RNF_fluxMax` (1e30) above which a flux counts
 as a missing value, `RNF_srcFluxMax` (1e7 m³/s) above which a flux is out of
-range, and `RNF_maxErrMsg` (20) messages per error counter and process.
+range, `RNF_cellVolMax` (0.2), the largest share of a target cell's
+top-layer volume that one time step of runoff may add, and `RNF_maxErrMsg`
+(20) messages per error counter and process.
 
 `RNF_srcFluxMax` is the package's own sanity bound on the input, and it is
 why `pkg/exf` may skip its runoff upper bound of 1e-6 m/s when `useRNF` is
@@ -130,26 +132,46 @@ cell and exceeds that bound by construction, so the package bounds the flux
 instead of the applied field. 1e7 m³/s is 48 Amazons (2.1e5 m³/s each) or
 every river on Earth together (1.2e6 m³/s) with a factor of 8 to spare, while
 a flux given per year rather than per second — 3.2e7 times too large — is
-refused for any source above 0.32 m³/s. `RNF_SUMMARY` prints the bound and
-four lines saying which bounds the run was held to, so a `STDOUT.0000` is
+refused for any source above 0.32 m³/s. `RNF_SUMMARY` prints both bounds and
+five lines saying which bounds the run was held to, so a `STDOUT.0000` is
 self-explanatory. The negative-runoff test of `EXF_CHECK_RANGE` is **not**
 skipped, so the sign of the applied field is still guarded per cell — at
 `nIter0` only, as the magnitude bound beside it also was before this change,
 so that asymmetry is pre-existing; only the magnitude check gained per-record
-coverage, in `RNF_NC_READ_ONE`.
+coverage, in `RNF_NC_READ_ONE`, and per-step per-cell coverage, in
+`RNF_EXF_RUNOFF`.
 
 **`RNF_srcFluxMax` is a file-scale unit-error filter, not a per-cell safety
 bound.** It does not see the cell: four sources each carrying exactly the
-bound, with every target on one lab_sea cell, apply 1.285228e-3 m/s — 1285
-times the exf bound that was relaxed — and the run ends normally with no
+bound, with every target on one lab_sea cell, applied 1.285228e-3 m/s — 1285
+times the exf bound that was relaxed — and the run ended normally with no
 `EXF WARNING` at all (measured), while a control at twice the bound per source
 is refused. N is 10⁵–10⁶ sources in the intended global 2 km case, and a
 converter index bug that collapses sources onto one cell reaches the
 aggregate. At 2 km the bound admits 2.5 m/s per cell against a real Amazon's
 5.25e-2 m/s. Closing that needs `rA`, the top-layer thickness and `deltaT` —
-a different check, not a different number here. See
-`docs/package_design.md` decision 2 for the derivation and the full
-disclosure.
+a different check, not a different number here.
+
+**`RNF_cellVolMax` is that per-cell check, and it is what refuses the file
+above.** `RNF_EXF_RUNOFF` stops the run, on every step, at any cell where
+`|runoff|·deltaTFreeSurf` exceeds `RNF_cellVolMax·drF(ks)·hFacC(ks)` — i.e.
+where one step of runoff would add more than 0.2 of the target cell's
+top-layer volume — naming the cell (`i,j,bi,bj` and its `XC,YC`), the applied
+value and the limit. The quantity is dimensionless, so one constant serves
+every grid and time step, which is exactly what the exf rate bound of
+1e-6 m/s could not do; 0.2 is MITgcm's own `hFacInf`, the smaller of the two
+thresholds it puts on the size of the surface cell. On the lab_sea target
+cell that is 5.5556e-4 m/s (1.73e7 m³/s, 82 Amazons); at every cs32 target
+cell 1.1574e-4 m/s (1.62e6 m³/s, 7.7 Amazons, on the smallest of them, and
+1.03e7 m³/s, 49 Amazons, on the median); on a 2 km cell with a 10 m top layer
+and a 1200 s step 1.6667e-3 m/s, i.e. 6.67e3 m³/s, which means a 2 km grid has
+to spread an Amazon over at least 32 cells. The committed sparse oracles reach
+6.72e-4 of a cell per step at most, a margin of 297. It bounds magnitude per cell and per step
+only: it does not certify a sustained flux just under it, it does not see the
+`xx_runoff` control increment (added after this routine), and it bounds
+neither the sign nor the properties the water carries. `RNF.h` beside the
+constant, and `docs/package_design.md` decision 2, carry the derivation and
+the full disclosure for both bounds.
 
 **That skip is not enough on its own, so a second test in the same routine is
 conditioned on `useRNF` too.** `EXF_CHECK_RANGE` also stops the run when
@@ -212,17 +234,21 @@ id, or the table entry where no source can be named:
 | a target on land, beyond an open boundary (`maskInC` = 0), under an ice shelf (`kTopC` ≠ 0), or whose `target_cell_area` differs from `rA` by more than `RNF_areaTol` | the volume would be lost, or the file was built for another grid |
 | a missing value of `runoff_flux`, of `runoff_salinity` or of a tracer: not a number, above `RNF_fluxMax`, or equal to the `_FillValue` or `missing_value` of that variable | the model contract allows no missing flux, and a missing salinity or tracer has no defined meaning. A missing `runoff_temperature` **is** allowed: that source enters at the reference temperature, as a source without the variable does |
 | a `runoff_flux` that is present but above `RNF_srcFluxMax` in absolute value | nothing else bounds the magnitude of a sparse source, because `EXF_CHECK_RANGE` skips its runoff upper bound and exempts the runoff from its `sflux` bound when `useRNF`. The message names the source, the record, the value and the limit, and the refusal is counted apart from the missing values: an out-of-range value is present and wrong, a missing one is absent |
+| an applied runoff that adds more than `RNF_cellVolMax` of a target cell's top-layer volume in one time step | `RNF_srcFluxMax` is per source and per file, so several sources on one cell add up past it unseen — a converter index bug that collapses targets does exactly that. Checked in `RNF_EXF_RUNOFF` on every step, because the flux series changes between records even though the target table does not. The message names the cell (`i,j,bi,bj` and its `XC,YC`), the applied value and the limit; the count is summed with `GLOBAL_SUM_INT` so a cell on one tile stops every process |
 | a `runoff_ptracer_<NAME>` whose `<NAME>` matches no `PTRACERS_names` entry, or more than one, or any such variable in a run that does not use pkg/ptracers | there is no tendency array to add it to, so the water would arrive without the tracer and nothing would say so. `RNF_usePtracers=.FALSE.` is the way to read such a file on purpose |
 | more `runoff_ptracer_*` variables than `RNF_nTr`, or a name that is empty or longer than `RNF_idLen` | the message prints the number the file has |
 | a count above `RNF_nSrcTile` or `RNF_nTgtTile` on one tile | the message prints the value the bound needs |
 
 Every process reads the whole file, so the refusals of the header, of a table
 entry and of the flux are reached by every process by itself, and the
-fraction sums are the same everywhere. A refused target and a count above an
-array bound are seen only by the process that owns the tile: they are
-counted, the counts are summed over all processes with `GLOBAL_SUM_INT`, and
-then every process stops. `ALL_PROC_DIE` ends MPI on the calling process
-only, so a stop on one process alone would hang the others.
+fraction sums are the same everywhere. A refused target, a count above an
+array bound and a cell above `RNF_cellVolMax` are seen only by the process
+that owns the tile: they are counted, the counts are summed over all
+processes with `GLOBAL_SUM_INT`, and then every process stops.
+`ALL_PROC_DIE` ends MPI on the calling process only, so a stop on one process
+alone would hang the others. For the first two that reduction happens once,
+at init; for `RNF_cellVolMax` it happens on every step, which is the cost of
+checking the applied field for the whole run rather than at `nIter0`.
 
 An entry that the table checks refuse is not placed, so its fraction would be
 missing from the sum of its source: the fraction sums are computed only when
