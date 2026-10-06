@@ -495,7 +495,15 @@ C       o more than one does;
 C       o the file has runoff tracers while pkg/ptracers is not in use
 C         (usePTRACERS false, or the model was built without it);
 C       o the file has more of them than RNF_nTr (RNF_SIZE.h);
-C       o the name after the prefix is empty.
+C       o the name after the prefix is empty;
+C       o it is longer than RNF_idLen (RNF.h), so it would not fit
+C         RNF_trNam.
+C
+C     The two name-length checks come before the matching, so they are
+C     reached whatever usePTRACERS is. Five of these seven refusals
+C     have a case in tests/rnf/refusal_check.py; the two that do not
+C     need another build (two ptracers of the same name, and a model
+C     compiled without pkg/ptracers).
 C
 C     Refusing an unmatched name is what keeps a tracer from being
 C     silently dropped: with no match there is no tendency array to
