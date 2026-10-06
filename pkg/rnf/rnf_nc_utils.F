@@ -766,6 +766,16 @@ C     missing values and how many of them in RNF_NC_READ_ONE; this
 C     routine only ends the run afterwards, so that one read reports
 C     every series rather than stopping at the first.
 C
+C     A flux that is present but larger than RNF_srcFluxMax (RNF.h)
+C     also stops the run, naming the source, the record and the
+C     value. That bound is the package's replacement for the pkg/exf
+C     runoff upper bound of 1.E-6 m/s, which EXF_CHECK_RANGE skips
+C     when useRNF is true: see RNF.h for the number and where it comes
+C     from, and RNF_SUMMARY, which prints it so that a log says which
+C     bound a run was held to. The other three series are read with
+C     RNF_fluxMax as their bound, which is the value above which they
+C     already count as missing, so only the flux is bounded here.
+C
 C     Called by the master thread, which opens and closes the file.
 
 C !USES: ===============================================================
@@ -800,11 +810,13 @@ C !FUNCTIONS: ==========================================================
 
 C !LOCAL VARIABLES: ====================================================
 C  nBad                 :: missing values found (not allowed)
+C  nOver                :: values found above the bound of their
+C                          series (not allowed)
 C  nMsg                 :: messages printed about them
 C  varNam               :: name of the series being read
 C  dumSum               :: sum of a series that has no use for one
       INTEGER bi, bj, k, n, iL, iT
-      INTEGER nBad, nMsg
+      INTEGER nBad, nOver, nMsg
       CHARACTER*(MAX_LEN_MBUF) msgBuf
       CHARACTER*(80) varNam
       _RL dumSum
@@ -815,6 +827,7 @@ C  dumSum               :: sum of a series that has no use for one
 CEOP
 
       nBad = 0
+      nOver = 0
       nMsg = 0
       RNF_bufSum(iBuf) = 0. _d 0
       DO bj = 1, nSy
@@ -863,11 +876,14 @@ C     ends before the run does would otherwise be read past its end.
         STOP 'ABNORMAL END: S/R RNF_NC_READ_FLUX'
       ENDIF
 
-C--   The volume flux, which every file has and no file may leave out
+C--   The volume flux, which every file has and no file may leave out.
+C     RNF_srcFluxMax is the only physical bound of the four series,
+C     and the one that replaces the pkg/exf runoff upper bound skipped
+C     with useRNF (see RNF.h and RNF_NC_READ_ONE).
       CALL RNF_NC_READ_ONE( fid, iRec, 'runoff_flux', .FALSE.,
-     I     'RNF_NC_READ_FLUX',
+     I     RNF_srcFluxMax, 'RNF_NC_READ_FLUX',
      O     RNF_bufFlux(1,1,1,iBuf), RNF_vldWrk, RNF_bufSum(iBuf),
-     U     nBad, nMsg,
+     U     nBad, nOver, nMsg,
      I     myThid )
 
 C--   The temperature, the only series that may have missing values.
@@ -875,9 +891,9 @@ C     RNF_vldWrk is work space shared by every series, so the flags
 C     are copied out right after the read.
       IF ( RNF_hasTemp ) THEN
         CALL RNF_NC_READ_ONE( fid, iRec, 'runoff_temperature', .TRUE.,
-     I       'RNF_NC_READ_FLUX',
+     I       RNF_fluxMax, 'RNF_NC_READ_FLUX',
      O       RNF_bufTemp(1,1,1,iBuf), RNF_vldWrk, dumSum,
-     U       nBad, nMsg,
+     U       nBad, nOver, nMsg,
      I       myThid )
         DO bj = 1, nSy
          DO bi = 1, nSx
@@ -890,9 +906,9 @@ C     are copied out right after the read.
 
       IF ( RNF_hasSalt ) THEN
         CALL RNF_NC_READ_ONE( fid, iRec, 'runoff_salinity', .FALSE.,
-     I       'RNF_NC_READ_FLUX',
+     I       RNF_fluxMax, 'RNF_NC_READ_FLUX',
      O       RNF_bufSalt(1,1,1,iBuf), RNF_vldWrk, dumSum,
-     U       nBad, nMsg,
+     U       nBad, nOver, nMsg,
      I       myThid )
       ENDIF
 
@@ -900,9 +916,9 @@ C     are copied out right after the read.
         n = MAX( 1, ILNBLNK(RNF_trNam(iT)) )
         WRITE(varNam,'(2A)') 'runoff_ptracer_', RNF_trNam(iT)(1:n)
         CALL RNF_NC_READ_ONE( fid, iRec, varNam, .FALSE.,
-     I       'RNF_NC_READ_FLUX',
+     I       RNF_fluxMax, 'RNF_NC_READ_FLUX',
      O       RNF_bufTrc(1,1,1,iBuf,iT), RNF_vldWrk, dumSum,
-     U       nBad, nMsg,
+     U       nBad, nOver, nMsg,
      I       myThid )
       ENDDO
 
@@ -911,8 +927,10 @@ C     are copied out right after the read.
      &     errNC, myThid )
 
 C--   Each series has already said how many values of its own were
-C     missing, and which, so this only ends the run.
-      IF ( nBad .GE. 1 ) THEN
+C     missing or out of range, and which, so this only ends the run.
+C     Every process read and tested the whole record, so every process
+C     reaches this with the same counts and ALL_PROC_DIE is sound.
+      IF ( nBad .GE. 1 .OR. nOver .GE. 1 ) THEN
         CALL ALL_PROC_DIE( 0 )
         STOP 'ABNORMAL END: S/R RNF_NC_READ_FLUX'
       ENDIF
@@ -929,9 +947,9 @@ C !ROUTINE: RNF_NC_READ_ONE
 
 C !INTERFACE: ==========================================================
       SUBROUTINE RNF_NC_READ_ONE(
-     I                   fid, iRec, varNam, allowMiss, caller,
+     I                   fid, iRec, varNam, allowMiss, valMax, caller,
      O                   srcVal, srcVld, valSum,
-     U                   nBad, nMsg,
+     U                   nBad, nOver, nMsg,
      I                   myThid )
 
 C !DESCRIPTION:
@@ -955,15 +973,33 @@ C     also raises nBad, and the caller stops the run; the flux and
 C     everything but the temperature is in that class (model
 C     contract; runoff schema 1.0, section 3.5).
 C
-C     nBad and nMsg are carried across the series of one record, so
-C     that one read reports every missing value it found and one
-C     process still prints at most RNF_maxErrMsg of them. The count
-C     line this routine prints at the end is per series and names it:
-C     one read covers every series of a record, so a count of the
-C     record as a whole would say how many values were lost and not of
-C     what. The caller stops the run once every series has reported.
+C     A value that is present and whose absolute value exceeds valMax
+C     is out of range rather than missing, and raises nOver. That is
+C     the package's own sanity bound on the input, which matters
+C     because EXF_CHECK_RANGE skips its runoff upper bound of
+C     1.E-6 m/s when useRNF is true (exf_check_range.F): without this
+C     test nothing between a unit mistake in the file and the applied
+C     field would refuse an absurd flux. Only the flux has a physical
+C     bound of its own, RNF_srcFluxMax of RNF.h; the other series pass
+C     RNF_fluxMax, above which a value is already counted as missing,
+C     so for them the test cannot fire. The refusal is separate from
+C     the missing-value one, with its own message and its own count,
+C     because an out-of-range value is present and wrong while a
+C     missing one is absent.
 C
-C     Called by the master thread, with the file already open.
+C     nBad, nOver and nMsg are carried across the series of one
+C     record, so that one read reports every missing value it found
+C     and one process still prints at most RNF_maxErrMsg of them. The
+C     count lines this routine prints at the end are per series and
+C     name it: one read covers every series of a record, so a count of
+C     the record as a whole would say how many values were lost and
+C     not of what. The caller stops the run once every series has
+C     reported.
+C
+C     Called by the master thread, with the file already open. Every
+C     process reads and tests every value of the record (only the
+C     handing out to the tiles is selective), so a refusal here is
+C     reached by all processes and the caller's ALL_PROC_DIE is sound.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -981,12 +1017,18 @@ C  fid                  :: NetCDF id of the open file
 C  iRec                 :: time record to read (from 1)
 C  varNam               :: name of the series
 C  allowMiss            :: a missing value is legal for this series
+C  valMax               :: largest absolute value this series may
+C                          carry; a present value above it stops the
+C                          run (RNF_srcFluxMax for the flux,
+C                          RNF_fluxMax, i.e. no extra bound, for the
+C                          others)
 C  caller               :: routine named in the messages
 C  myThid               :: my thread Id number
       INTEGER fid
       INTEGER iRec
       CHARACTER*(*) varNam
       LOGICAL allowMiss
+      _RL valMax
       CHARACTER*(*) caller
       INTEGER myThid
 
@@ -997,11 +1039,13 @@ C                          was missing
 C  valSum               :: value summed over the sources of the file
 C  nBad                 :: raised by each missing value that is not
 C                          allowed
+C  nOver                :: raised by each present value above valMax
 C  nMsg                 :: raised by each message printed
       _RL srcVal(RNF_nSrcTile,nSx,nSy)
       _RL srcVld(RNF_nSrcTile,nSx,nSy)
       _RL valSum
       INTEGER nBad
+      INTEGER nOver
       INTEGER nMsg
 
 #ifdef ALLOW_RNF
@@ -1012,7 +1056,7 @@ C !FUNCTIONS: ==========================================================
 
 C !LOCAL VARIABLES: ====================================================
       INTEGER bi, bj, k, n, iV
-      INTEGER iSrc0, nLoc, nChunk, iChunk, nBad0
+      INTEGER iSrc0, nLoc, nChunk, iChunk, nBad0, nOver0
       CHARACTER*(MAX_LEN_MBUF) msgBuf
       CHARACTER*(RNF_idLen) srcId
       INTEGER idLen
@@ -1030,6 +1074,7 @@ CEOP
 
       valSum = 0. _d 0
       nBad0 = nBad
+      nOver0 = nOver
       iV = MAX( 1, ILNBLNK(varNam) )
       DO bj = 1, nSy
        DO bi = 1, nSx
@@ -1123,6 +1168,25 @@ C-        not a number, or too large to be a physical value
             ENDIF
           ELSE
             valSum = valSum + val
+C-          present, but larger than this series may be. The package
+C           bound stands in for the pkg/exf runoff upper bound that
+C           EXF_CHECK_RANGE skips with useRNF, so it has to stop the
+C           run and not merely warn.
+            IF ( ABS(val) .GT. valMax ) THEN
+              nOver = nOver + 1
+              IF ( nMsg .LT. RNF_maxErrMsg ) THEN
+                nMsg = nMsg + 1
+                CALL RNF_NC_SOURCE_ID( fid, iSrc0+n-1, caller,
+     O               srcId, idLen,
+     I               myThid )
+                WRITE(msgBuf,'(6A,I8,A,1PE16.8,A,1PE16.8)')
+     &            caller, ': RNF: ', varNam(1:iV),
+     &            ' out of range: source ', srcId(1:idLen),
+     &            ', record', iRec, ', value', val,
+     &            ', limit', valMax
+                CALL PRINT_ERROR( msgBuf, myThid )
+              ENDIF
+            ENDIF
           ENDIF
         ENDDO
 
@@ -1147,6 +1211,14 @@ C     say how many values were lost and not of what.
       IF ( nBad .GT. nBad0 ) THEN
         WRITE(msgBuf,'(2A,I8,3A)') caller, ': RNF:', nBad-nBad0,
      &    ' missing value(s) of ', varNam(1:iV), ' (not allowed)'
+        CALL PRINT_ERROR( msgBuf, myThid )
+      ENDIF
+
+C--   How many values of THIS series were out of range, counted and
+C     named apart from the missing ones for the same reason.
+      IF ( nOver .GT. nOver0 ) THEN
+        WRITE(msgBuf,'(2A,I8,3A)') caller, ': RNF:', nOver-nOver0,
+     &    ' value(s) of ', varNam(1:iV), ' out of range (not allowed)'
         CALL PRINT_ERROR( msgBuf, myThid )
       ENDIF
 #endif /* HAVE_NETCDF */

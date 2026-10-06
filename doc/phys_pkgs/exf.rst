@@ -222,6 +222,26 @@ General flags and parameters
     | exf_iprec               | 32               | precision of input fields (32-bit or 64-bit)                                  |
     +-------------------------+------------------+-------------------------------------------------------------------------------+
 
+:code:`useExfCheckRange` has one exception. :code:`EXF_CHECK_RANGE` skips the
+**upper** bound on :code:`runoff` (10\ :sup:`--6` m/s) when
+:code:`useRNF = .TRUE.`, because a sparse point source of pkg/rnf puts a whole
+river into one grid cell and exceeds that bound by construction: 1000
+m\ :sup:`3`/s into a single 2 km cell is 2.5 x 10\ :sup:`--4` m/s. pkg/rnf
+bounds the volume flux of each source itself instead, and reports which bound
+applies in its own parameter summary. Because :code:`EXF_GETFORCING` subtracts
+:code:`runoff` into :code:`sflux` before calling this routine, the
+:code:`sflux` bound is conditioned on :code:`useRNF` in the same way: it is
+applied to :code:`sflux + runoff`, so what it tests is :code:`evap - precip`,
+which is the part of :code:`sflux` it exists for, and an out-of-range
+:code:`evap - precip` is still refused.
+
+Nothing else changes. The negative-:code:`runoff` test still applies, so does
+every other field's range check, and both conditions are guarded by
+:code:`useRNF` alone, so a run **without** pkg/rnf behaves exactly as before.
+In particular a dense :code:`runoffFile` above 10\ :sup:`--6` m/s on a wet
+cell is still stopped, by the :code:`runoff` bound and by the :code:`sflux`
+bound, and such a set-up still needs :code:`useExfCheckRange = .FALSE.`.
+
 Field attributes
 ################
 

@@ -43,6 +43,17 @@ C
 C     The refusals that need the file itself (its header, its table
 C     entries and its targets) are in RNF_INIT_FIXED, which has
 C     already run when this routine is called.
+C
+C     NOT refused here: the magnitude of the runoff itself. pkg/exf
+C     skips its runoff upper bound of 1.E-6 m/s when useRNF is true
+C     (EXF_CHECK_RANGE), and the package's replacement is
+C     RNF_srcFluxMax (RNF.h), enforced in RNF_NC_READ_ONE as each
+C     record is read and reported by RNF_SUMMARY. It cannot live in
+C     this routine: the file's time series are first read by
+C     RNF_INIT_VARIA, which runs after PACKAGES_CHECK, so no flux
+C     value exists yet when this routine is called. Checking at every
+C     record also covers a file whose later records are the bad ones,
+C     which an init-time check could not.
 
 C !USES: ===============================================================
       IMPLICIT NONE

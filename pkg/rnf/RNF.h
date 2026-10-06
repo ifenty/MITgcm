@@ -116,6 +116,69 @@ C                           cell, the one constant needs no
 C                           retuning between grids or resolutions
 C     RNF_fluxMax        :: a flux above this value in absolute terms
 C                           counts as a missing value (not allowed)
+C     RNF_srcFluxMax     :: largest volume flux one source may carry
+C                           [m^3/s]. A record with a larger value
+C                           stops the run, naming the source
+C                           (RNF_NC_READ_ONE). This is the package's
+C                           replacement for the pkg/exf runoff upper
+C                           bound of 1.E-6 m/s, which EXF_CHECK_RANGE
+C                           skips when useRNF is true because a sparse
+C                           point source exceeds it by construction:
+C                           1000 m^3/s into one 2 km cell is
+C                           2.5E-4 m/s.
+C                           The value, 1.E7 m^3/s, is set from the
+C                           physics and not from taste: the Amazon,
+C                           the largest river on Earth, carries about
+C                           2.1E5 m^3/s and all rivers of the world
+C                           together about 1.2E6 m^3/s, so one source
+C                           id may hold 48 Amazons, or every river on
+C                           Earth with a factor of 8 to spare. What it
+C                           refuses is a unit mistake: a flux given
+C                           per year rather than per second is
+C                           3.2E7 times too large, so anything above
+C                           0.32 m^3/s is caught; a factor of 1000
+C                           (mm, or kg/s read as m^3/s) is caught
+C                           above 1E4 m^3/s, i.e. for any source the
+C                           size of a real river.
+C                           What the applied field may then reach
+C                           depends on the grid, because the package
+C                           applies flux*frac/rA with frac in [0,1]:
+C                           1.E7 m^3/s is 3.2E-4 m/s into the lab_sea
+C                           target cell (rA = 3.112287E10 m^2) and
+C                           2.5 m/s into a 2 km cell (4.0E6 m^2). A
+C                           per-cell value of 1E9 m/s, the kind of
+C                           number a unit error produces, needs a cell
+C                           smaller than 1E-2 m^2 to get past this
+C                           bound.
+C                           READ THIS AS A FILE-SCALE UNIT-ERROR
+C                           FILTER, NOT AS A PER-CELL SAFETY BOUND.
+C                           It does not see the cell: four sources
+C                           each carrying exactly this value, with
+C                           every target on one lab_sea cell, apply
+C                           1.285228E-3 m/s - 1285 times the pkg/exf
+C                           bound that was relaxed - and the run ends
+C                           normally with no EXF WARNING at all
+C                           (measured). N is 10^5 to 10^6 sources in
+C                           the intended global 2 km case, so the
+C                           aggregate headroom is five to six orders
+C                           of magnitude, and a converter index bug
+C                           that collapses sources onto one cell
+C                           reaches it. At 2 km this bound admits
+C                           2.5 m/s per cell while a real Amazon is
+C                           5.25E-2 m/s, so it constrains the file and
+C                           not the applied field. A grid of smaller
+C                           cells admits proportionally more. Closing
+C                           that gap needs rA, the top-layer
+C                           thickness and deltaT, i.e. a different
+C                           check, not a different number here.
+C                           The per-cell SIGN is still guarded, by the
+C                           negative-runoff test of EXF_CHECK_RANGE,
+C                           which useRNF does not skip - but that test
+C                           runs at nIter0 only, as the bound it sits
+C                           beside did before this change, so the
+C                           sign asymmetry is pre-existing and not
+C                           introduced here; only the magnitude check
+C                           gained per-record coverage
 C     RNF_idLen          :: length of a source id in the model
 C     RNF_maxErrMsg      :: messages one process prints per error
 C                           counter, so that a large file cannot fill
@@ -233,6 +296,8 @@ CEOP
       PARAMETER ( RNF_lonLatTol = 0.5 _d 0 )
       _RL RNF_fluxMax
       PARAMETER ( RNF_fluxMax = 1. _d 30 )
+      _RL RNF_srcFluxMax
+      PARAMETER ( RNF_srcFluxMax = 1. _d 7 )
       INTEGER RNF_idLen
       PARAMETER ( RNF_idLen = 64 )
       INTEGER RNF_maxErrMsg

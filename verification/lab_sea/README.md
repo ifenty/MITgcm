@@ -233,10 +233,25 @@ January, and the 1979 yearly file is scaled by 0.45 relative to 1978, so a recor
 file chosen wrongly at the turn of the year changes the result. The six records of
 `input.rnof_month1` (December 1978 to May 1979) differ from the climatology of
 `input.rnof_month`, so the two monthly modes cannot be mistaken for each other. Rates stay below
-1e-6 m/s: `input/data.exf` sets `useExfCheckRange = .TRUE.`, and at the first time step
-`EXF_CHECK_RANGE` stops the run if runoff on a wet cell is negative or above 1e-6 m/s
-(`pkg/exf/exf_check_range.F`, lines 177-191 and 211-216, called from
-`pkg/exf/exf_getforcing.F`, lines 346-349).
+1e-6 m/s (4.0e-7 to 7.6e-7 m/s): `input/data.exf` sets `useExfCheckRange = .TRUE.`, and at the
+first time step `EXF_CHECK_RANGE` stops the run if runoff on a wet cell is negative or above
+1e-6 m/s (`pkg/exf/exf_check_range.F`, lines 215-261 and 280-285, called from
+`pkg/exf/exf_getforcing.F`, lines 346-349, which calls it at `nIter0` or at every step with
+`exf_debugLev` ≥ 3).
+
+Since RUNOFF-030 the **upper** half of that runoff test carries `.AND. .NOT.useRNF`, because
+one sparse point source puts a whole river into a single cell and exceeds 1e-6 m/s by
+construction, so `pkg/rnf` bounds the volume flux of each source instead (`RNF_srcFluxMax` =
+1e7 m³/s, reported by `RNF_SUMMARY`). The negative-runoff half is **not** skipped and applies
+to both paths.
+
+The same routine also stops the run when `ABS(sflux)` exceeds 1e-6 m/s, and
+`pkg/exf/exf_getforcing.F`, line 313, subtracts the runoff into `sflux` before the check, so
+that bound is conditioned on `useRNF` too: with it set, the test is applied to
+`sflux + runoff`, i.e. to `evap - precip`, which stays guarded. A sparse run above 1e-6 m/s
+therefore goes through with `useExfCheckRange = .TRUE.`, and a **dense** one does not.
+The runoff of the files here is unchanged anyway, because each `input.rnof_sp_<X>` case has to
+stay comparable with its dense twin, which is still held to 1e-6 m/s on both bounds.
 
 To regenerate the runoff files (needs python3 with numpy; the output is deterministic):
 

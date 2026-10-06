@@ -120,8 +120,51 @@ only a flux therefore leaves a run bit-for-bit where it was.
 The constants fixed by the model contract are in `RNF.h`: `RNF_fracTol`
 (1e-6) on the fraction sum of a source, `RNF_areaTol` (1e-4) between
 `target_cell_area` and `rA`, `RNF_fluxMax` (1e30) above which a flux counts
-as a missing value, and `RNF_maxErrMsg` (20) messages per error counter and
-process.
+as a missing value, `RNF_srcFluxMax` (1e7 m³/s) above which a flux is out of
+range, and `RNF_maxErrMsg` (20) messages per error counter and process.
+
+`RNF_srcFluxMax` is the package's own sanity bound on the input, and it is
+why `pkg/exf` may skip its runoff upper bound of 1e-6 m/s when `useRNF` is
+true (`EXF_CHECK_RANGE`): a sparse point source puts one whole river into one
+cell and exceeds that bound by construction, so the package bounds the flux
+instead of the applied field. 1e7 m³/s is 48 Amazons (2.1e5 m³/s each) or
+every river on Earth together (1.2e6 m³/s) with a factor of 8 to spare, while
+a flux given per year rather than per second — 3.2e7 times too large — is
+refused for any source above 0.32 m³/s. `RNF_SUMMARY` prints the bound and
+four lines saying which bounds the run was held to, so a `STDOUT.0000` is
+self-explanatory. The negative-runoff test of `EXF_CHECK_RANGE` is **not**
+skipped, so the sign of the applied field is still guarded per cell — at
+`nIter0` only, as the magnitude bound beside it also was before this change,
+so that asymmetry is pre-existing; only the magnitude check gained per-record
+coverage, in `RNF_NC_READ_ONE`.
+
+**`RNF_srcFluxMax` is a file-scale unit-error filter, not a per-cell safety
+bound.** It does not see the cell: four sources each carrying exactly the
+bound, with every target on one lab_sea cell, apply 1.285228e-3 m/s — 1285
+times the exf bound that was relaxed — and the run ends normally with no
+`EXF WARNING` at all (measured), while a control at twice the bound per source
+is refused. N is 10⁵–10⁶ sources in the intended global 2 km case, and a
+converter index bug that collapses sources onto one cell reaches the
+aggregate. At 2 km the bound admits 2.5 m/s per cell against a real Amazon's
+5.25e-2 m/s. Closing that needs `rA`, the top-layer thickness and `deltaT` —
+a different check, not a different number here. See
+`docs/package_design.md` decision 2 for the derivation and the full
+disclosure.
+
+**That skip is not enough on its own, so a second test in the same routine is
+conditioned on `useRNF` too.** `EXF_CHECK_RANGE` also stops the run when
+`ABS(sflux)` exceeds 1e-6 m/s, and `EXF_GETFORCING` subtracts the runoff into
+`sflux` (`pkg/exf/exf_getforcing.F:313`) before calling the check
+(`:346-349`), so any wet cell whose runoff exceeds that value would breach the
+`sflux` bound whatever the runoff test did. With `useRNF` that bound is
+therefore applied to `sflux + runoff`, re-adding exactly what `:313`
+subtracted: the quantity tested is `evap - precip`, which is the part of
+`sflux` the bound exists for, and an out-of-range `evap - precip` is **still
+refused**. Measured: a source applying 3.21e-4 m/s now runs to a normal end
+with `useExfCheckRange = .TRUE.`, and fails against a build with either
+condition reverted. A **dense** `runoffFile` above 1e-6 m/s is still refused by
+both bounds and still needs `useExfCheckRange = .FALSE.`; both conditions are
+guarded by `useRNF` alone, and the dense defect is an upstream matter.
 
 ## Configurations that are refused
 
@@ -168,6 +211,7 @@ id, or the table entry where no source can be named:
 | a source whose fractions do not sum to 1 within `RNF_fracTol` | mass would be lost; this is also how a target that no tile owns is caught (a blank exch2 tile, or a cell no facet uses) |
 | a target on land, beyond an open boundary (`maskInC` = 0), under an ice shelf (`kTopC` ≠ 0), or whose `target_cell_area` differs from `rA` by more than `RNF_areaTol` | the volume would be lost, or the file was built for another grid |
 | a missing value of `runoff_flux`, of `runoff_salinity` or of a tracer: not a number, above `RNF_fluxMax`, or equal to the `_FillValue` or `missing_value` of that variable | the model contract allows no missing flux, and a missing salinity or tracer has no defined meaning. A missing `runoff_temperature` **is** allowed: that source enters at the reference temperature, as a source without the variable does |
+| a `runoff_flux` that is present but above `RNF_srcFluxMax` in absolute value | nothing else bounds the magnitude of a sparse source, because `EXF_CHECK_RANGE` skips its runoff upper bound and exempts the runoff from its `sflux` bound when `useRNF`. The message names the source, the record, the value and the limit, and the refusal is counted apart from the missing values: an out-of-range value is present and wrong, a missing one is absent |
 | a `runoff_ptracer_<NAME>` whose `<NAME>` matches no `PTRACERS_names` entry, or more than one, or any such variable in a run that does not use pkg/ptracers | there is no tendency array to add it to, so the water would arrive without the tracer and nothing would say so. `RNF_usePtracers=.FALSE.` is the way to read such a file on purpose |
 | more `runoff_ptracer_*` variables than `RNF_nTr`, or a name that is empty or longer than `RNF_idLen` | the message prints the number the file has |
 | a count above `RNF_nSrcTile` or `RNF_nTgtTile` on one tile | the message prints the value the bound needs |
