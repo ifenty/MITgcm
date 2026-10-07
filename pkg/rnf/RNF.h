@@ -220,54 +220,140 @@ C                           f is instead the fractional freshwater
 C                           dilution the surface tracer forcing
 C                           applies in that step; the model linearises
 C                           the exact dilution h/(h+dh) = 1/(1+f) to
-C                           1-f, whose relative error is exactly f^2.
+C                           1-f, whose relative error is exactly f^2
+C                           (the linear term is EmPmR*(salt -
+C                           salt_EvPrRn)*mass2rUnit,
+C                           model/src/external_forcing_surf.F:310-316).
+C                           THAT SECOND READING HOLDS ONLY WHERE
+C                           dTtracerLev(ks) = deltaTFreeSurf. The two
+C                           are equal in both test experiments, but
+C                           they need not be: deltaTFreeSurf defaults
+C                           to deltaTMom and NOT to deltaTtracer
+C                           (model/src/ini_parms.F:1068, whose own
+C                           comment calls that default "inappropriate"
+C                           and advises deltaTFreeSurf = deltaTtracer
+C                           under asynchronous stepping). cs32 has
+C                           deltaTMom = 1200 against
+C                           deltaTtracer = 86400 and escapes the trap
+C                           only by setting deltaTFreeSurf = 86400
+C                           explicitly; on that ratio an
+C                           asynchronously stepped set-up that left
+C                           the default would make the dilution
+C                           reading wrong by 72x while the volume
+C                           reading stayed right. No enrolled case can
+C                           see a mismatch. Whether to bound with
+C                           MAX(deltaTFreeSurf,dTtracerLev(ks)) is an
+C                           open design question, deliberately not
+C                           decided here.
 C                           Being dimensionless is the point: ONE
 C                           number serves every grid, resolution and
 C                           time step, which is what the pkg/exf
 C                           runoff bound of 1.E-6 m/s could not do and
 C                           why it had to be skipped.
-C                           WHERE 0.2 COMES FROM. It is MITgcm's own
-C                           threshold for the size of the surface
-C                           cell: hFacInf = 0.2 and hFacSup = 2.0
-C                           (defaults in
-C                           model/src/set_defaults.F:258-259,
+C                           WHERE 0.2 COMES FROM. Two legs, both
+C                           properties of f itself. READ THIS BEFORE
+C                           RAISING THE CONSTANT.
+C                           o CFL. The water injected into the cell
+C                             has to leave it: f is exactly the
+C                             Courant number of the top-layer outflow
+C                             the injection requires, since
+C                             f <= 0.2 is U*dt/dx <= 0.2 for the
+C                             horizontal outflow U that carries the
+C                             added volume away. 0.2 is a standard
+C                             advective-CFL safety factor, i.e. a
+C                             fifth of the stability limit.
+C                           o Linearisation. The surface tracer
+C                             forcing is first order in f and its
+C                             relative error is exactly f^2 (above),
+C                             so 0.2 is the share at which that error
+C                             is 4%. Beyond it the model's own
+C                             dilution term is no longer a
+C                             linearisation of anything.
+C                           Both legs say "a deliberate share, not an
+C                           edge". For scale, MITgcm's own band on the
+C                           surface-cell fraction is
+C                           hFacInf = 0.2 to hFacSup = 2.0 (defaults
+C                           at model/src/set_defaults.F:258-259,
 C                           described at model/inc/PARAMS.h:762 as
 C                           "Threshold (inf and sup) for fraction size
-C                           of surface cell"), outside which
-C                           CALC_SURF_DR (model/src/calc_surf_dr.F:
-C                           92-98) and CALC_R_STAR
-C                           (model/src/calc_r_star.F:185-238) warn.
-C                           The SMALLER of the two departures from
-C                           drF(ks) that the model itself treats as
-C                           remarkable is hFacInf = 0.2, and that is
-C                           taken here as the limit on what a single
-C                           step of runoff may do: a step that moves
-C                           the surface cell by more than that crosses
-C                           the model's own tolerance band before the
-C                           free surface has a step in which to
-C                           respond, and at f = 0.2 the linearised
-C                           dilution above is already 4% wrong. The
-C                           value is a fixed constant and not a
+C                           of surface cell"). NOTE WHAT THAT BAND IS
+C                           AND IS NOT: it bounds the FRACTION, not
+C                           its per-step change, and runoff THICKENS
+C                           the surface cell, so from a full cell
+C                           (hFacC = 1.0, measured at every target of
+C                           both test grids) the band is first crossed
+C                           at +1.0, at hFacSup. f = 0.2 crosses
+C                           nothing; it is 4 to 5 times inside the
+C                           band, which is the margin this constant
+C                           buys and the reason it is a share rather
+C                           than a threshold. (An earlier version of
+C                           this comment read hFacInf as a bound on
+C                           the per-step change and called 0.2 the
+C                           edge of the band. That was wrong in both
+C                           parts and both reviewers caught it; the
+C                           value 0.2 is unchanged, only its
+C                           justification is.)
+C                           Outside the band the model does NOT merely
+C                           warn, and the two routines differ:
+C                           CALC_R_STAR warns and then STOPS on the
+C                           thin side (model/src/calc_r_star.F:
+C                           201-242), while CALC_SURF_DR's thin-side
+C                           STOP is commented out
+C                           (model/src/calc_surf_dr.F:105-108) and it
+C                           clamps the surface to Rmin_surf instead.
+C                           The value is a fixed constant and not a
 C                           data.rnf parameter, as RNF_srcFluxMax is:
 C                           the dimensionless form needs no retuning
 C                           per grid, so a run-time scalar would be
 C                           cost without benefit.
-C                           WHAT IT IS ON EACH GRID (measured):
+C                           WHAT IT IS ON EACH GRID (measured). THE
+C                           LIMIT IS NOT A CONSTANT OF THE GRID: it
+C                           tracks the live hFacC, so on an r* grid it
+C                           moves with the state (see "the thickness
+C                           is the live one" below). Each figure below
+C                           says which basis it is on.
 C                           o lab_sea (rA = 3.112287E10 m^2,
 C                             drF(1) = 10 m, deltaTFreeSurf = 3600 s):
 C                             5.5556E-4 m/s, i.e. 1.729E7 m^3/s into
-C                             that cell, 82 Amazons;
+C                             that cell, 82 Amazons. Here reference
+C                             and live agree exactly and for all time:
+C                             lab_sea is a LINEAR free surface
+C                             (nonlinFreeSurf = 0, select_rStar = 0,
+C                             reported by its own run), so nothing
+C                             updates hFacC after initialisation;
 C                           o cs32 (drF(1) = 50 m, deltaTFreeSurf =
-C                             86400 s): 1.1574E-4 m/s at EVERY one of
-C                             the 1189 target cells of
-C                             input.rnof_sp_icedyn, because hFacC(1) is
-C                             measured 1.0 at all of them (its
+C                             86400 s) is an r* grid
+C                             (nonlinFreeSurf = 4, select_rStar = 2),
+C                             so two figures are needed.
+C                             REFERENCE basis: 1.1574E-4 m/s at every
+C                             one of the 1189 target cells of
+C                             input.rnof_sp_icedyn, h0FacC being 1.0 at
+C                             all of them in the init dump (its
 C                             hFacMinDr of 20 m would allow a thinner
-C                             surface cell, but no target has one). In
-C                             m^3/s that is 1.62E6 (7.7 Amazons) on the
+C                             surface cell, but no target has one); in
+C                             m^3/s, 1.62E6 (7.7 Amazons) on the
 C                             smallest target cell, rA = 1.4019E10 m^2,
 C                             and 1.03E7 (49 Amazons) on the median,
-C                             rA = 8.8743E10 m^2;
+C                             rA = 8.8743E10 m^2.
+C                             LIVE basis, which is what is actually
+C                             enforced and applies from nIter0 because
+C                             INITIALISE_VARIA updates r* before the
+C                             first step (initialise_varia.F:302,307):
+C                             rStarFacC over those targets spans
+C                             0.8787 to 0.99956, the thickness 43.94 to
+C                             49.98 m and the enforced limit 1.0171E-4
+C                             to 1.1569E-4 m/s. 309 of the 1189
+C                             targets (26%) sit more than 1% below the
+C                             reference figure and 18 (1.5%) more than
+C                             10% below. Measured from the committed
+C                             run's own Depth.data and
+C                             Eta.0000036010.data with CALC_R_STAR's
+C                             own formula (calc_r_star.F:103-105), and
+C                             agreeing with review B's independent
+C                             measurement and with review A's executed
+C                             cs32 refusal, which printed
+C                             thickness 4.69852227E+01 m and
+C                             limit 1.08762090E-04;
 C                           o a 2 km cell (rA = 4E6 m^2, drF(1) =
 C                             10 m, deltaTFreeSurf = 1200 s):
 C                             1.6667E-3 m/s, i.e. 6.67E3 m^3/s, 0.032
@@ -291,9 +377,15 @@ C                           over its real cells is what target_fraction
 C                           exists for. Every committed sparse oracle
 C                           is far below: the largest per-cell f over
 C                           every record of every one of them is
-C                           6.72E-4, on cs32, a margin of 297; the
-C                           lab_sea files reach 3.42E-4, a margin
-C                           of 585.
+C                           6.72E-4, on cs32, a margin of 297 - but
+C                           that pair is on the REFERENCE basis. On
+C                           the live thickness the same cs32 cell
+C                           (5903) is f = 7.16E-4 and the margin 279.5
+C                           (measured, and the figure review A
+C                           measured at the decisive cell at nIter0).
+C                           The lab_sea files reach 3.42E-4, a margin
+C                           of 585, on both bases at once, that grid
+C                           being a linear free surface.
 C                           WHAT IT DOES NOT COVER.
 C                           o It is per cell and per STEP, so it does
 C                             not keep a run physical: a flux just
@@ -341,10 +433,73 @@ C                           o It is blind to a collapse onto a cell
 C                             whose top layer is thick and whose time
 C                             step is short, exactly in proportion to
 C                             drF(ks)*hFacC/deltaTFreeSurf.
-C                           o The thickness used is the reference one,
-C                             drF(ks)*hFacC(ks); with select_rStar the
-C                             live thickness is rStarFacC times that,
-C                             within [hFacInf,hFacSup] of it.
+C                           o The NaN arm of the test (it is written
+C                             .NOT.(x .LE. lim) so a value that is not
+C                             a number is refused rather than compared)
+C                             is correct but UNREACHABLE on a supported
+C                             input: RNF_NC_READ_FLUX refuses a
+C                             non-finite flux first and rA is positive,
+C                             so nothing can deliver a NaN here. It is
+C                             defence in depth, and its validity rests
+C                             on the optfile: -ffinite-math-only would
+C                             silently void it AND the pre-existing
+C                             rnf_init_fixed.F:728-737 tests of the
+C                             same shape. The build measured for this
+C                             issue is -O0 with no fast-math.
+C                           o Granularity: neither enrolled case
+C                             separates 0.2 from any value in
+C                             (0.99*limit, limit], so a mutant that
+C                             tightened the bound by less than 1% would
+C                             pass both.
+C                           o The GLOBAL_SUM_INT is unconditional for
+C                             every useRNF run, including one with no
+C                             target on any tile, and is unmeasured
+C                             beyond 2 processes.
+C                           o RNF_tgtK is fixed at init while this
+C                             guard re-evaluates kSurfC every step, so
+C                             the two could diverge under pkg/shelfice
+C                             remeshing. Not reachable now: a shelfice
+C                             target is refused at init.
+C                           THE THICKNESS IS THE LIVE ONE, which is a
+C                           strength and not a caveat, but it has two
+C                           consequences worth stating. _hFacC resolves
+C                           to hFacC (model/inc/HFACC_MACROS.h:37-39,
+C                           the macro also adapting to the reduced-
+C                           memory HFACC_* options), and the only
+C                           run-time writer of hFacC is
+C                           model/src/update_r_star.F:55-57, which sets
+C                           hFacC = h0FacC*rStarFacC. So:
+C                           o With select_rStar the guard enforces the
+C                             r*-stretched thickness of the current
+C                             state - state-consistent, with no
+C                             rStarFacC factor left to apply. But that
+C                             limit is NOT clipped: calc_r_star.F:
+C                             185-198 only COUNTS cells outside
+C                             [hFacInf,hFacSup], so the limit can drift
+C                             with the state and ONE FILE CAN PASS AT
+C                             nIter0 AND BE REFUSED LATER. That
+C                             mid-run abort is deliberate: an
+C                             init-only check would be unsound in the
+C                             numerator (the flux series is not
+C                             static) and in the denominator (the
+C                             thickness is not either), and bounding
+C                             by h0FacC*hFacInf instead would be 5
+C                             times stricter than the physics above and
+C                             would refuse legitimate configurations
+C                             at init.
+C                           o With nonlinFreeSurf and select_rStar = 0
+C                             the opposite holds: CALC_SURF_DR writes
+C                             hFac_surfC and NOT hFacC
+C                             (model/src/calc_surf_dr.F:120-122), so
+C                             there the guard uses the REFERENCE
+C                             thickness and UNDER-states the actual
+C                             departure. No test experiment runs that
+C                             combination, so it is unmeasured here.
+C                           o Under a linear free surface nothing
+C                             updates hFacC at all and live equals
+C                             reference for the whole run. That is
+C                             lab_sea, and it is the premise the
+C                             0.99-of-the-bound control case relies on.
 C     RNF_idLen          :: length of a source id in the model
 C     RNF_maxErrMsg      :: messages one process prints per error
 C                           counter, so that a large file cannot fill

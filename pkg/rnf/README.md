@@ -159,14 +159,37 @@ where one step of runoff would add more than 0.2 of the target cell's
 top-layer volume — naming the cell (`i,j,bi,bj` and its `XC,YC`), the applied
 value and the limit. The quantity is dimensionless, so one constant serves
 every grid and time step, which is exactly what the exf rate bound of
-1e-6 m/s could not do; 0.2 is MITgcm's own `hFacInf`, the smaller of the two
-thresholds it puts on the size of the surface cell. On the lab_sea target
-cell that is 5.5556e-4 m/s (1.73e7 m³/s, 82 Amazons); at every cs32 target
-cell 1.1574e-4 m/s (1.62e6 m³/s, 7.7 Amazons, on the smallest of them, and
-1.03e7 m³/s, 49 Amazons, on the median); on a 2 km cell with a 10 m top layer
-and a 1200 s step 1.6667e-3 m/s, i.e. 6.67e3 m³/s, which means a 2 km grid has
-to spread an Amazon over at least 32 cells. The committed sparse oracles reach
-6.72e-4 of a cell per step at most, a margin of 297. It bounds magnitude per cell and per step
+1e-6 m/s could not do. 0.2 is a deliberate share with two legs, both
+properties of the ratio itself: it is exactly the Courant number of the
+top-layer outflow the injection requires, so 0.2 is a standard advective-CFL
+safety factor; and the model's surface tracer forcing is first order in it
+with relative error exactly its square, so 0.2 is where that error is 4%. For
+scale it is 4–5× inside MITgcm's own `hFacInf`-to-`hFacSup` band on the
+surface-cell fraction — but that band bounds the fraction, not its per-step
+change, and runoff *thickens* the cell, so from a full cell the band is first
+crossed at +1.0 and 0.2 crosses nothing.
+
+**The thickness is the live one**, because the only run-time writer of
+`hFacC` is `update_r_star.F:55-57` (`hFacC = h0FacC·rStarFacC`). So the
+enforced limit is state-consistent, and on an r\* grid it moves with the
+state: a file can pass at `nIter0` and be refused later, which is deliberate.
+With `nonlinFreeSurf` but `select_rStar = 0` the reverse holds — `CALC_SURF_DR`
+writes `hFac_surfC`, not `hFacC` — so there the guard uses the reference and
+under-states the departure. Under a linear free surface live equals reference
+for the whole run.
+
+On the lab_sea target cell the limit is 5.5556e-4 m/s (1.73e7 m³/s,
+82 Amazons), and there reference and live agree exactly, lab_sea being a
+linear free surface. On cs32, an r\* grid, the reference-basis figure is
+1.1574e-4 m/s at every target (1.62e6 m³/s, 7.7 Amazons, on the smallest of
+them; 1.03e7 m³/s, 49 Amazons, on the median), while the **live** limit
+actually enforced spans 1.0171e-4 to 1.1569e-4 m/s, with 26% of targets more
+than 1% below the reference figure. On a 2 km cell with a 10 m top layer
+and a 1200 s step it is 1.6667e-3 m/s, i.e. 6.67e3 m³/s, which means a 2 km
+grid has to spread an Amazon over at least 32 cells. The committed sparse
+oracles reach 6.72e-4 of a cell per step at most on the reference basis, a
+margin of 297, or 7.16e-4 and 279.5 on the live one.
+It bounds magnitude per cell and per step
 only: it does not certify a sustained flux just under it, it does not see the
 `xx_runoff` control increment (added after this routine), and it bounds
 neither the sign nor the properties the water carries. `RNF.h` beside the
