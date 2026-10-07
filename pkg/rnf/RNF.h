@@ -460,24 +460,48 @@ C                             guard re-evaluates kSurfC every step, so
 C                             the two could diverge under pkg/shelfice
 C                             remeshing. Not reachable now: a shelfice
 C                             target is refused at init.
-C                           THE THICKNESS IS THE LIVE ONE, which is a
-C                           strength and not a caveat, but it has two
-C                           consequences worth stating. _hFacC resolves
-C                           to hFacC (model/inc/HFACC_MACROS.h:37-39,
-C                           the macro also adapting to the reduced-
-C                           memory HFACC_* options), and the only
-C                           run-time writer of hFacC is
-C                           model/src/update_r_star.F:55-57, which sets
-C                           hFacC = h0FacC*rStarFacC. So:
-C                           o With select_rStar the guard enforces the
-C                             r*-stretched thickness of the current
-C                             state - state-consistent, with no
-C                             rStarFacC factor left to apply. But that
-C                             limit is NOT clipped: calc_r_star.F:
-C                             185-198 only COUNTS cells outside
-C                             [hFacInf,hFacSup], so the limit can drift
-C                             with the state and ONE FILE CAN PASS AT
-C                             nIter0 AND BE REFUSED LATER. That
+C                           THE THICKNESS IS THE LIVE ONE, in every
+C                           regime, which is a strength and not a
+C                           caveat. _hFacC resolves to hFacC
+C                           (model/inc/HFACC_MACROS.h:37-39, the macro
+C                           also adapting to the reduced-memory HFACC_*
+C                           options), and the surface-level hFacC the
+C                           guard divides by is MAINTAINED AT RUN TIME
+C                           in every regime: by UPDATE_R_STAR when
+C                           select_rStar > 0 (update_r_star.F:55 and
+C                           :90, hFacC = h0FacC*rStarFacC) and by
+C                           UPDATE_SURF_DR when select_rStar = 0
+C                           (update_surf_dr.F:56 and :92, hFacC =
+C                           hFac_surfC / hFac_surfNm1C), the two being
+C                           the two arms of one IF in
+C                           model/src/forward_step.F (:832, with the
+C                           installs at :839 and :852).
+C                           (hFacC has more run-time writers than
+C                           those - UPDATE_SIGMA, UPDATE_MASKS_ETC and
+C                           pkg/shelfice's remesh also assign it, 11
+C                           assignment statements over 5 routines
+C                           measured - so this is deliberately a claim
+C                           about the SURFACE level in the regimes that
+C                           apply, not a claim that nothing else writes
+C                           the array. An earlier version of this
+C                           comment said update_r_star was the only
+C                           run-time writer, which is false; it came
+C                           from a grep whose output had been truncated
+C                           by head.)
+C                           What the guard therefore reads is not quite
+C                           the current state: it is the thickness
+C                           installed by the PREVIOUS step's
+C                           end-of-step update, i.e. the state at the
+C                           end of step n-1. With doResetHFactors the
+C                           begin-of-step install of the Nm1 fields
+C                           puts it a further step back. Either way it
+C                           lags by at least one step and is never
+C                           current.
+C                           o The limit is NOT clipped under r*:
+C                             calc_r_star.F:185-198 only COUNTS cells
+C                             outside [hFacInf,hFacSup], so the limit
+C                             drifts with the state and ONE FILE CAN
+C                             PASS AT nIter0 AND BE REFUSED LATER. That
 C                             mid-run abort is deliberate: an
 C                             init-only check would be unsound in the
 C                             numerator (the flux series is not
@@ -487,19 +511,32 @@ C                             by h0FacC*hFacInf instead would be 5
 C                             times stricter than the physics above and
 C                             would refuse legitimate configurations
 C                             at init.
-C                           o With nonlinFreeSurf and select_rStar = 0
-C                             the opposite holds: CALC_SURF_DR writes
-C                             hFac_surfC and NOT hFacC
-C                             (model/src/calc_surf_dr.F:120-122), so
-C                             there the guard uses the REFERENCE
-C                             thickness and UNDER-states the actual
-C                             departure. No test experiment runs that
-C                             combination, so it is unmeasured here.
+C                           o The two nonlinear regimes differ, and NOT
+C                             in the direction an earlier version of
+C                             this comment claimed (it said the
+C                             select_rStar = 0 regime uses the
+C                             reference thickness and under-states the
+C                             departure; that was wrong, and acting on
+C                             it would invite multiplying in a stretch
+C                             factor that hFacC already contains). The
+C                             real difference is that under
+C                             select_rStar = 0 the live thickness has a
+C                             thin-side FLOOR - calc_surf_dr.F:105-108
+C                             has its STOP commented out and :109-116
+C                             clamps rSurftmp to Rmin_surf - whereas
+C                             under r* nothing clamps. So the drift
+C                             above is bounded below in the surf_dr
+C                             regime and unbounded in the r* one. No
+C                             experiment here runs nonlinFreeSurf > 0
+C                             with select_rStar = 0, so that regime is
+C                             unmeasured in this project.
 C                           o Under a linear free surface nothing
-C                             updates hFacC at all and live equals
-C                             reference for the whole run. That is
-C                             lab_sea, and it is the premise the
-C                             0.99-of-the-bound control case relies on.
+C                             updates hFacC at run time at all
+C                             (update_surf_dr.F:125 resets it to
+C                             h0FacC) and live equals reference for the
+C                             whole run. That is lab_sea, and it is the
+C                             premise the 0.99-of-the-bound control
+C                             case relies on.
 C     RNF_idLen          :: length of a source id in the model
 C     RNF_maxErrMsg      :: messages one process prints per error
 C                           counter, so that a large file cannot fill

@@ -169,14 +169,21 @@ surface-cell fraction — but that band bounds the fraction, not its per-step
 change, and runoff *thickens* the cell, so from a full cell the band is first
 crossed at +1.0 and 0.2 crosses nothing.
 
-**The thickness is the live one**, because the only run-time writer of
-`hFacC` is `update_r_star.F:55-57` (`hFacC = h0FacC·rStarFacC`). So the
-enforced limit is state-consistent, and on an r\* grid it moves with the
-state: a file can pass at `nIter0` and be refused later, which is deliberate.
-With `nonlinFreeSurf` but `select_rStar = 0` the reverse holds — `CALC_SURF_DR`
-writes `hFac_surfC`, not `hFacC` — so there the guard uses the reference and
-under-states the departure. Under a linear free surface live equals reference
-for the whole run.
+**The thickness is the live one, in every regime:** the surface-level `hFacC`
+the guard divides by is maintained at run time by `UPDATE_R_STAR` when
+`select_rStar > 0` (`update_r_star.F:55`, `:90`) and by `UPDATE_SURF_DR` when
+`select_rStar = 0` (`update_surf_dr.F:56`, `:92`), the two arms of one `IF` in
+`forward_step.F:832`. So the enforced limit is state-consistent — one step
+behind, being the thickness the previous step's end-of-step update installed —
+and on an r\* grid it moves with the state: a file can pass at `nIter0` and be
+refused later, which is deliberate. The two nonlinear regimes differ in how
+far that can drift, not in which thickness is used: under `select_rStar = 0`
+the live thickness has a thin-side floor (`calc_surf_dr.F:109-116` clamps to
+`Rmin_surf`, its `STOP` at `:105-108` being commented out) whereas under r\*
+`calc_r_star.F:185-198` only counts, so the drift is bounded below in the
+first and unbounded in the second. Under a linear free surface nothing
+updates `hFacC` at run time (`update_surf_dr.F:125` resets it to `h0FacC`) and
+live equals reference for the whole run.
 
 On the lab_sea target cell the limit is 5.5556e-4 m/s (1.73e7 m³/s,
 82 Amazons), and there reference and live agree exactly, lab_sea being a
