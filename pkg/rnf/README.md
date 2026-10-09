@@ -12,11 +12,29 @@ series are stored once per source.
 - **Volume:** the flux in m³/s is split by fraction, divided by the cell area
   and assigned to the exf `runoff` field in m/s. Everything downstream in exf
   and in the model is the code a dense file uses.
-- **Temperature, salinity and passive tracers:** optional. They enter as
-  tendency terms, in the way `pkg/icefront` and `pkg/shelfice` add theirs.
+- **Temperature, salinity and passive tracers:** optional. At a surface
+  target they enter through the surface flux fields the rest of MITgcm's
+  surface forcing uses, so KPP and the `TFLUX`/`SFLUX` diagnostics see them:
+  - **heat** through exf's own runoff-temperature convention: the package
+    sets the exf field `runoftemp` to the flux-weighted temperature of the
+    sources of each cell (the surface temperature standing in for a source
+    without one), and `EXF_MAPFIELDS` adds
+    `Cp·(θ − runoftemp)·runoff·rhoConstFresh` to `Qnet`, exactly as for a
+    dense `runoftempfile`. This needs `#define ALLOW_RUNOFTEMP` in
+    `EXF_OPTIONS.h`;
+  - **salt** added to `surfaceForcingS` and **tracers** to
+    `surfaceForcingPTr` (`RNF_FORCING_SURF`, at the end of
+    `EXTERNAL_FORCING_SURF`, and again after pkg/longstep rebuilds the
+    tracer forcing), as the mass flux times the difference between the
+    source's value and the value the model's freshwater formulation already
+    gave the water.
+
+  Subsurface targets (not yet supported) will use tendency terms, as
+  `pkg/shelfice` does.
 
 The package needs `pkg/exf` (`pkg_depend`: `rnf +exf`) with `ALLOW_RUNOFF`
-defined, and a build with NetCDF.
+defined, `ALLOW_RUNOFTEMP` too for a file with a temperature, and a build
+with NetCDF.
 
 ## Status
 
@@ -24,8 +42,9 @@ The volume flux works, in every time mode, and so do the temperature, the
 salinity and the passive tracers. The package
 reads the file, places its target cells on the tiles of each process, checks
 the file and the targets, selects the time records that bracket the model
-time, assigns the exf `runoff` field at every step and adds the heat, the salt
-and the tracer of the runoff as tendency terms at the target cells.
+time, assigns the exf `runoff` field at every step, and puts the heat, the salt
+and the tracer of the runoff into the surface flux fields (`runoftemp`/`Qnet`,
+`surfaceForcingS`, `surfaceForcingPTr`) at the target cells.
 What is not there yet: the diagnostics of the input fields and the monitor
 (`RNF_MONITOR`), the budget checks over time and over the domain, the adjoint
 (TAF) list files, and the `addMass` path that interior and under-shelf
@@ -60,10 +79,10 @@ the year.
 | `rnf_time_setup.F` | resolves the file's time axis and the `data.rnf` overrides into exf's period, start time and repeat cycle | done |
 | `rnf_getrec.F` | `RNF_GETREC` (the two records bracketing the model time and the weight, from the pkg/exf routine of the mode, plus hold-exact) and `RNF_FILE_NAME` (`<base>_YYYY.nc`) | done |
 | `rnf_init_varia.F` | zeroes the fields, empties the record buffers, loads the records of the start time and reports the flux | done |
-| `rnf_fields_load.F` | `RNF_FIELDS_LOAD` decides the two time levels; `RNF_LOAD_AT` selects the records, reads the ones no buffer holds, interpolates or holds every series and builds the dense fields, tracing the selection at `RNF_debugLev` ≥ 3; `RNF_COPY_APPLY`/`RNF_ZERO_APPLY` keep the set the tendency terms read | done |
-| `rnf_exf_runoff.F` | assigns the exf `runoff` field | done |
-| `rnf_tendency_apply.F` | `RNF_TENDENCY_APPLY_T`, `_S` and `_PTR`: the heat, salt and tracer terms at the target level | done |
-| `rnf_diagnostics_init.F` | registers `RNFgT`, `RNFgS` and `RNFtrNN`, the diagnostics of those terms | done; the input-only diagnostics and the monitor are not |
+| `rnf_fields_load.F` | `RNF_FIELDS_LOAD` decides the two time levels; `RNF_LOAD_AT` selects the records, reads the ones no buffer holds, interpolates or holds every series and builds the dense fields, tracing the selection at `RNF_debugLev` ≥ 3; `RNF_COPY_APPLY`/`RNF_ZERO_APPLY` keep, and exchange, the set the salt and tracer terms read | done |
+| `rnf_exf_runoff.F` | assigns the exf `runoff` field, and the exf `runoftemp` field when the file has a temperature | done |
+| `rnf_forcing_surf.F` | `RNF_FORCING_SURF` and `RNF_FORCING_SURF_PTR`: the salt and tracer terms in `surfaceForcingS` and `surfaceForcingPTr` | done |
+| `rnf_diagnostics_init.F` | registers `RNFqnet` (W/m², the runoff heat added to `Qnet`, > 0 decreases θ), `RNFsflx` (g/m²/s, the salt added to `surfaceForcingS`, > 0 increases salinity) and `RNFtfNN` (tracer·kg/m²/s, per runoff tracer), each the runoff's own share of the field it feeds | done; the input-only diagnostics and the monitor are not |
 
 The monitor (`RNF_MONITOR`), the diagnostics of the input fields and the
 adjoint (TAF) list files are not there yet.
@@ -233,6 +252,8 @@ Each one stops the run with an error that names the parameter.
 | `exf_outscal_sflux` not 1 | `RNF_CHECK` | it scales runoff in `EmPmR` but not in the other places that use the field |
 | `SHI_update_kTopC` with `useShelfIce` | `RNF_CHECK` | a moving ice-shelf edge can cover a target cell, which then loses its volume |
 | `USE_OLD_EXTERNAL_FORCING` defined | `RNF_CHECK` | the package has no hooks in the old forcing routines |
+| a file with `runoff_temperature` in a build without `ALLOW_RUNOFTEMP` | `RNF_CHECK` | the heat goes through the exf `runoftemp` field, which exists only with that option, as for a dense `runoftempfile`; `RNF_useTemp=.FALSE.` reads the file without it |
+| pkg/longstep with `LS_nIter` ≠ 1 and a file that feeds a ptracer | `RNF_CHECK` | the tracer term of the current step would be applied against the long-step average of the freshwater flux; `LS_nIter = 1` or `RNF_usePtracers=.FALSE.` |
 
 The first two are in `RNF_READPARMS` because they guard the read of the file
 in `RNF_INIT_FIXED`, which the model calls before `RNF_CHECK`.
@@ -265,7 +286,7 @@ id, or the table entry where no source can be named:
 | a missing value of `runoff_flux`, of `runoff_salinity` or of a tracer: not a number, above `RNF_fluxMax`, or equal to the `_FillValue` or `missing_value` of that variable | the model contract allows no missing flux, and a missing salinity or tracer has no defined meaning. A missing `runoff_temperature` **is** allowed: that source enters at the reference temperature, as a source without the variable does |
 | a `runoff_flux` that is present but above `RNF_srcFluxMax` in absolute value | nothing else bounds the magnitude of a sparse source, because `EXF_CHECK_RANGE` skips its runoff upper bound and exempts the runoff from its `sflux` bound when `useRNF`. The message names the source, the record, the value and the limit, and the refusal is counted apart from the missing values: an out-of-range value is present and wrong, a missing one is absent |
 | an applied runoff that adds more than `RNF_cellVolMax` of a target cell's top-layer volume in one time step | `RNF_srcFluxMax` is per source and per file, so several sources on one cell add up past it unseen — a converter index bug that collapses targets does exactly that. Checked in `RNF_EXF_RUNOFF` on every step, because the flux series changes between records even though the target table does not. The message names the cell (`i,j,bi,bj` and its `XC,YC`), the applied value and the limit; the count is summed with `GLOBAL_SUM_INT` so a cell on one tile stops every process |
-| a `runoff_ptracer_<NAME>` whose `<NAME>` matches no `PTRACERS_names` entry, or more than one, or any such variable in a run that does not use pkg/ptracers | there is no tendency array to add it to, so the water would arrive without the tracer and nothing would say so. `RNF_usePtracers=.FALSE.` is the way to read such a file on purpose |
+| a `runoff_ptracer_<NAME>` whose `<NAME>` matches no `PTRACERS_names` entry, or more than one, or any such variable in a run that does not use pkg/ptracers | there is no `surfaceForcingPTr` to add it to, so the water would arrive without the tracer and nothing would say so. `RNF_usePtracers=.FALSE.` is the way to read such a file on purpose |
 | more `runoff_ptracer_*` variables than `RNF_nTr`, or a name that is empty or longer than `RNF_idLen` | the message prints the number the file has |
 | a count above `RNF_nSrcTile` or `RNF_nTgtTile` on one tile | the message prints the value the bound needs |
 
@@ -298,10 +319,12 @@ every entry was accepted, and the log says so.
 Both files are written by
 `verification/lab_sea/input.rnof_const/gen_sparse.py`. The development
 repository holds the refusal and placement checks, the cell-by-cell
-applied-field and timing checks, and the two checks of the tendency terms:
-one against the analytic value of every case of the design's reference
-tables, and one against the heat that `pkg/exf` applies through its own
-`runoftempfile` path, cell by cell.
+applied-field and timing checks, and the checks of the heat, salt and tracer
+terms: one against the analytic value of every case of the design's reference
+tables, one against the heat that `pkg/exf` applies through its own
+`runoftempfile` path, cell by cell and down to `TFLUX`, one that shows KPP and
+`TFLUX` see the runoff heat, and the budget closure of all of them over the
+domain.
 
 ## Design
 

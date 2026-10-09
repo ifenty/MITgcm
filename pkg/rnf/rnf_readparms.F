@@ -8,7 +8,8 @@ C !INTERFACE: ==========================================================
 
 C !DESCRIPTION:
 C     Initialize RNF parameters, read in data.rnf (namelist RNF_PARM01).
-C     Returns at once when useRNF is false.
+C     Returns at once when useRNF is false, having set RNF_applyT
+C     false, the one package flag pkg/exf reads (EXF_MAPFIELDS).
 C     When useRNF is true, stops the run for a blank RNF_file and for
 C     a build without NetCDF. These two refusals guard the static read
 C     of RNF_file in RNF_INIT_FIXED. They cannot wait for RNF_CHECK,
@@ -54,6 +55,10 @@ C-    pkg RNF is not used
         _BEGIN_MASTER(myThid)
 C-    Track pkg activation status:
          RNFisON = .FALSE.
+C-    EXF_MAPFIELDS reads RNF_applyT whenever pkg/rnf is compiled
+C     (RUNOFF-031), and RNF_INIT_FIXED, which sets it, is not called
+C     without useRNF: give it its value here
+         RNF_applyT = .FALSE.
 C     print a (weak) warning if data.rnf is found
          CALL PACKAGES_UNUSED_MSG( 'useRNF', ' ', ' ' )
         _END_MASTER(myThid)

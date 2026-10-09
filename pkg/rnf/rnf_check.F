@@ -103,7 +103,9 @@ C  msgBuf               :: message buffer
       INTEGER errCount
       CHARACTER*(MAX_LEN_MBUF) msgBuf
 #ifdef ALLOW_LONGSTEP
+C  trNam                :: name of one runoff tracer, for the message
       INTEGER k, iL
+      CHARACTER*(RNF_idLen) trNam
       INTEGER  ILNBLNK
       EXTERNAL ILNBLNK
 #endif /* ALLOW_LONGSTEP */
@@ -213,9 +215,10 @@ C     it otherwise), hence the nested test.
      &    ' LS_nIter =', LS_nIter, ' cannot take runoff tracers:'
         CALL PRINT_ERROR( msgBuf, myThid )
         DO k = 1, RNF_nTrUse
-          iL = MAX( 1, ILNBLNK(RNF_trNam(k)) )
+          trNam = RNF_trNam(k)
+          iL = MAX( 1, ILNBLNK(trNam) )
           WRITE(msgBuf,'(3A)') 'RNF_CHECK:   runoff_ptracer_',
-     &      RNF_trNam(k)(1:iL), ' of the file'
+     &      trNam(1:iL), ' of the file'
           CALL PRINT_ERROR( msgBuf, myThid )
         ENDDO
         WRITE(msgBuf,'(2A)') 'RNF_CHECK: use LS_nIter = 1, or',
