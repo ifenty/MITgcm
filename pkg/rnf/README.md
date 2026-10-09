@@ -14,20 +14,26 @@ series are stored once per source.
   and in the model is the code a dense file uses.
 - **Temperature, salinity and passive tracers:** optional. At a surface
   target they enter through the surface flux fields the rest of MITgcm's
-  surface forcing uses, so KPP and the `TFLUX`/`SFLUX` diagnostics see them:
+  surface forcing uses, so KPP and the `TFLUX`/`SFLUX` diagnostics see what
+  of them reaches the ocean:
   - **heat** through exf's own runoff-temperature convention: the package
     sets the exf field `runoftemp` to the flux-weighted temperature of the
     sources of each cell (the surface temperature standing in for a source
     without one), and `EXF_MAPFIELDS` adds
     `Cp·(θ − runoftemp)·runoff·rhoConstFresh` to `Qnet`, exactly as for a
     dense `runoftempfile`. This needs `#define ALLOW_RUNOFTEMP` in
-    `EXF_OPTIONS.h`;
+    `EXF_OPTIONS.h`. Being part of `Qnet`, the heat is scaled under sea ice
+    like the rest of it: with `pkg/seaice` (`SEAICE_EXTERNAL_FLUXES`) only
+    the open-water share `(1 − A)` reaches the ocean and the ice, and the
+    share `A` is delivered nowhere, exactly as on the dense path (measured
+    259.44 of 262.30 W/m² at `A = 0.989`; see RUNOFF-024 of the development
+    repository);
   - **salt** added to `surfaceForcingS` and **tracers** to
     `surfaceForcingPTr` (`RNF_FORCING_SURF`, at the end of
     `EXTERNAL_FORCING_SURF`, and again after pkg/longstep rebuilds the
     tracer forcing), as the mass flux times the difference between the
     source's value and the value the model's freshwater formulation already
-    gave the water.
+    gave the water. The volume, salt and tracers are not scaled by the ice.
 
   Subsurface targets (not yet supported) will use tendency terms, as
   `pkg/shelfice` does.
@@ -82,7 +88,7 @@ the year.
 | `rnf_fields_load.F` | `RNF_FIELDS_LOAD` decides the two time levels; `RNF_LOAD_AT` selects the records, reads the ones no buffer holds, interpolates or holds every series and builds the dense fields, tracing the selection at `RNF_debugLev` ≥ 3; `RNF_COPY_APPLY`/`RNF_ZERO_APPLY` keep, and exchange, the set the salt and tracer terms read | done |
 | `rnf_exf_runoff.F` | assigns the exf `runoff` field, and the exf `runoftemp` field when the file has a temperature | done |
 | `rnf_forcing_surf.F` | `RNF_FORCING_SURF` and `RNF_FORCING_SURF_PTR`: the salt and tracer terms in `surfaceForcingS` and `surfaceForcingPTr` | done |
-| `rnf_diagnostics_init.F` | registers `RNFqnet` (W/m², the runoff heat added to `Qnet`, > 0 decreases θ), `RNFsflx` (g/m²/s, the salt added to `surfaceForcingS`, > 0 increases salinity) and `RNFtfNN` (tracer·kg/m²/s, per runoff tracer), each the runoff's own share of the field it feeds | done; the input-only diagnostics and the monitor are not |
+| `rnf_diagnostics_init.F` | registers `RNFqnet` (W/m², the runoff heat added to `Qnet`, > 0 decreases θ), `RNFsflx` (g/m²/s, the salt added to `surfaceForcingS`, > 0 increases salinity) and `RNFtfNN` (tracer·kg/m²/s, per runoff tracer), each the runoff's own contribution to the field it feeds, as the package hands it over: `RNFqnet` is the term added to exf `Qnet` before any sea-ice open-water scaling, so under `pkg/seaice` only `(1 − A)` of it reaches ocean and ice | done; the input-only diagnostics and the monitor are not |
 
 The monitor (`RNF_MONITOR`), the diagnostics of the input fields and the
 adjoint (TAF) list files are not there yet.
