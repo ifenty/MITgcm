@@ -8,8 +8,8 @@ C !INTERFACE: ==========================================================
 
 C !DESCRIPTION:
 C     Put the sparse runoff of the current time step into the dense
-C     per-tile fields, and make the set the tendency terms read belong
-C     to the right time level.
+C     per-tile fields, and make the set the salt and tracer terms read
+C     belong to the right time level.
 C     Called from LOAD_FIELDS_DRIVER before EXF_GETFORCING, with the
 C     same myTime that pkg/exf uses.
 C
@@ -19,10 +19,13 @@ C     the per-tile source series and spread those over the target
 C     cells. This routine only decides which time levels are needed.
 C
 C     **Two time levels.** The volume flux goes to the exf runoff
-C     array of the current step. The temperature, salinity and tracer
-C     terms must instead belong to the same step as the freshwater
-C     flux that the model uses for its own temperature, salinity and
-C     tracer terms (package design, decision 3, "Time level"):
+C     array of the current step, and the heat with it: RNF_EXF_RUNOFF
+C     makes the exf runoftemp field from the fields of the current
+C     step, which is the step the dense runoftemp belongs to. The salt
+C     and tracer terms (RNF_FORCING_SURF) must instead belong to the
+C     same step as the freshwater flux that the model uses for its own
+C     salinity and tracer terms (package design, decision 3, "Time
+C     level"):
 C
 C       o branches L and U, and branch N with staggerTimeStep: the
 C         current step, so the RNF_ap* fields are a copy of the ones
@@ -69,7 +72,7 @@ C  none
 #ifdef ALLOW_RNF
 
 C !LOCAL VARIABLES: ====================================================
-C  tApply               :: time level the tendency terms need
+C  tApply               :: time level the salt and tracer terms need
 C  iApply               :: its iteration number
 C  needAp               :: the RNF_ap* fields are not that level yet
 C  zeroAp               :: that level is before the start of the run
@@ -95,8 +98,8 @@ C--   Every thread decides from state that no thread has changed yet
         IF ( zeroAp ) THEN
 C--      first step of a run that starts at iteration 0: the model
 C        applies no freshwater flux to its tracers at this step, so
-C        the package applies no heat or salt either. One step of
-C        [(mT) - m_T*T_ref]*mass2rUnit would otherwise be added with
+C        the package applies no salt or tracer either. One step of
+C        [(mS) - m*S_ref]*mass2rUnit would otherwise be added with
 C        no volume to carry it.
           CALL RNF_ZERO_APPLY( myThid )
         ELSE
@@ -229,8 +232,9 @@ C     i.e. volumes ADD while the properties are FLUX-WEIGHTED, which
 C     is what conserves heat, salt and tracer content when several
 C     sources feed one cell (model contract). No division by the
 C     total flux is made here, so a cell with zero flux needs no
-C     special case: the tendency terms use the sums directly
-C     (RNF_mXT is (mT), not a mean temperature).
+C     special case: the salt and tracer terms use the sums directly.
+C     The one division, (mT)/m for the exf runoftemp field, is made in
+C     RNF_EXF_RUNOFF, where m = 0 is a case of its own.
 C     The property sums are accumulated in volume-flux units and
 C     scaled to mass flux in one pass at the end, as RNF_mflx is.
 C
@@ -509,12 +513,23 @@ C !INTERFACE: ==========================================================
 
 C !DESCRIPTION:
 C     Copy the dense mass-flux and property fields that RNF_LOAD_AT
-C     just built into the set the tendency routines read (RNF_ap* of
-C     RNF.h). Called by every thread for its own tiles.
+C     just built into the set the salt and tracer terms read (RNF_ap*
+C     of RNF.h), and exchange it. Called by every thread for its own
+C     tiles.
 C
-C     The two sets exist so that RNF_TENDENCY_APPLY_T, _S and _PTR
-C     need not know which time level they are applying: the time-level
-C     rule of decision 3 is decided once, in RNF_FIELDS_LOAD.
+C     The two sets exist so that RNF_FORCING_SURF need not know which
+C     time level it is applying: the time-level rule of decision 3 is
+C     decided once, in RNF_FIELDS_LOAD.
+C
+C     **The exchange.** RNF_LOAD_AT fills the tile interior only, and
+C     the surface forcing fields the terms go into are used over the
+C     halo as well: EXTERNAL_FORCING_SURF fills them there and KPP_CALC
+C     reads them there (pkg/kpp/kpp_calc.F, iMin = 2-OLx). The fields
+C     those routines take from other packages are exchanged before
+C     they are used (EmPmR and Qnet in EXF_MAPFIELDS, saltFlux in
+C     SEAICE_MODEL), so these are too. Nothing is exchanged when
+C     neither term can be non-zero, which leaves a run whose file
+C     carries no salinity or tracer exactly as it was.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -538,8 +553,6 @@ CEOP
         DO j = 1-OLy, sNy+OLy
          DO i = 1-OLx, sNx+OLx
           RNF_apMflx(i,j,bi,bj)  = RNF_mflx(i,j,bi,bj)
-          RNF_apMflxT(i,j,bi,bj) = RNF_mflxT(i,j,bi,bj)
-          RNF_apXT(i,j,bi,bj)    = RNF_mXT(i,j,bi,bj)
           RNF_apXS(i,j,bi,bj)    = RNF_mXS(i,j,bi,bj)
          ENDDO
         ENDDO
@@ -554,6 +567,16 @@ CEOP
       ENDDO
       _BARRIER
 
+      IF ( RNF_applyS .OR. RNF_nTrUse.GE.1 ) THEN
+        _EXCH_XY_RL( RNF_apMflx, myThid )
+      ENDIF
+      IF ( RNF_applyS ) THEN
+        _EXCH_XY_RL( RNF_apXS, myThid )
+      ENDIF
+      DO iTr = 1, RNF_nTrUse
+        CALL EXCH_XY_RL( RNF_apXTr(1-OLx,1-OLy,1,1,iTr), myThid )
+      ENDDO
+
 #endif /* ALLOW_RNF */
 
       RETURN
@@ -567,12 +590,13 @@ C !INTERFACE: ==========================================================
       SUBROUTINE RNF_ZERO_APPLY( myThid )
 
 C !DESCRIPTION:
-C     Set the fields the tendency routines read to zero, so that no
-C     heat, salt or tracer is applied. Used at the first step of a run
+C     Set the fields the salt and tracer terms read to zero, so that
+C     no salt or tracer is applied. Used at the first step of a run
 C     that starts at iteration 0 when the terms lag the step
 C     (RNF_lagFlds): the model's own PmEpR is zero there
 C     (model/src/ini_nlfs_vars.F:59), so there is no volume to carry
-C     the properties.
+C     the properties. The heat is not lagged: it follows the exf
+C     runoff field of the current step, as the dense runoftemp does.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -596,8 +620,6 @@ CEOP
         DO j = 1-OLy, sNy+OLy
          DO i = 1-OLx, sNx+OLx
           RNF_apMflx(i,j,bi,bj)  = 0. _d 0
-          RNF_apMflxT(i,j,bi,bj) = 0. _d 0
-          RNF_apXT(i,j,bi,bj)    = 0. _d 0
           RNF_apXS(i,j,bi,bj)    = 0. _d 0
          ENDDO
         ENDDO

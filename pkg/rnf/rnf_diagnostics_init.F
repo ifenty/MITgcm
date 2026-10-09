@@ -1,4 +1,7 @@
 #include "RNF_OPTIONS.h"
+#ifdef ALLOW_EXF
+# include "EXF_OPTIONS.h"
+#endif /* ALLOW_EXF */
 
 C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
 CBOP 0
@@ -11,30 +14,35 @@ C     !DESCRIPTION:
 C     Register the diagnostics of the sparse runoff package, called
 C     from RNF_INIT_FIXED (package design, decision 1).
 C
-C     **What is registered here, and what is not.** This is the subset
-C     RUNOFF-013 needs: the three tendency terms as they are applied,
-C     filled inside RNF_TENDENCY_APPLY_T, _S and _PTR, at the level
-C     and with the reference value each term actually used. They are
-C     the package's own record of what it did to the model state, and
-C     the instrument the cell-by-cell comparison with the exf
-C     runoftemp term uses, since neither TFLUX nor SFLUX includes
-C     these terms (model/src/diags_oceanic_surf_flux.F builds those
-C     from surfaceForcingT/S and PmEpR).
+C     **What is registered here, and what is not.** The runoff's own
+C     contributions to the surface flux fields it feeds, one per
+C     property, each in the units and sign of the field it is part of
+C     (RUNOFF-031), so that a budget can separate the runoff from the
+C     rest of TFLUX, SFLUX and the ptracers surface forcing:
+C
+C       RNFqnet  :: the heat EXF_MAPFIELDS adds to Qnet for the runoff
+C                   (RNF_EXF_RUNOFF), W/m^2, > 0 decreases theta, as
+C                   EXFqnet and Qnet; registered and filled only with
+C                   ALLOW_RUNOFTEMP, which the heat needs
+C       RNFsflx  :: the salt added to surfaceForcingS
+C                   (RNF_FORCING_SURF), g/m^2/s, > 0 increases
+C                   salinity, as SFLUX
+C       RNFtfNN  :: the tracer added to surfaceForcingPTr
+C                   (RNF_FORCING_SURF_PTR), tracer units * kg/m^2/s,
+C                   > 0 increases the tracer
+C
+C     Each is filled where the term is computed, from the values that
+C     term used, once per step. All three are two-dimensional: the
+C     surface fields are, and the model applies them at the surface
+C     level of the column. They replace the three-dimensional tendency
+C     diagnostics RNFgT, RNFgS and RNFtrNN of RUNOFF-013, which ended
+C     with the tendency terms themselves.
 C
 C     The input-only fields of decision 8 (RNFvflx, RNFmflx, RNFtemp,
-C     RNFsaln, RNFnsrc), the heat and salt terms in flux units
-C     (RNFheat, RNFsalt) and the monitor belong to RUNOFF-015, which
-C     fills them at the end of RNF_FIELDS_LOAD. Decision 8 lists
-C     RNFheat and RNFsalt as two-dimensional; that has to be settled
-C     with the fill, because a 2-D diagnostic may be filled only once
-C     per step and tile, while the terms below are computed at one
-C     level per column and that level is kSurfC(i,j) under an ice
-C     shelf. The three registered here are three-dimensional, which
-C     is how decision 8 lists RNFgT and RNFgS, so the question does
-C     not arise for them.
+C     RNFsaln, RNFnsrc) and the monitor belong to RUNOFF-015.
 C
 C     The tracer diagnostics are numbered by runoff tracer, not by
-C     ptracer: RNFtrNN is the term of the NNth runoff_ptracer_<NAME>
+C     ptracer: RNFtfNN is the term of the NNth runoff_ptracer_<NAME>
 C     variable of the file, whose name and ptracer number
 C     RNF_SUMMARY prints. RNF_nTr of them are registered, because the
 C     list is built before the file is read.
@@ -67,27 +75,31 @@ C     diagTitle :: local string (80c): description of field in diagnostic
 
 C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
 
-      diagName  = 'RNFgT   '
-      diagTitle = 'Runoff temperature tendency term of pkg/rnf'
-      diagUnits = 'degC/s          '
-      diagCode  = 'SMR     MR      '
+#ifdef ALLOW_RUNOFTEMP
+      diagName  = 'RNFqnet '
+      diagTitle = 'Runoff heat added to Qnet by pkg/rnf,'
+     &          //' >0 decreases theta'
+      diagUnits = 'W/m^2           '
+      diagCode  = 'SM      U1      '
       CALL DIAGNOSTICS_ADDTOLIST( diagNum,
      I     diagName, diagCode, diagUnits, diagTitle, 0, myThid )
+#endif /* ALLOW_RUNOFTEMP */
 
-      diagName  = 'RNFgS   '
-      diagTitle = 'Runoff salinity tendency term of pkg/rnf'
-      diagUnits = 'g/kg/s          '
-      diagCode  = 'SMR     MR      '
+      diagName  = 'RNFsflx '
+      diagTitle = 'Runoff salt flux of pkg/rnf in surfaceForcingS,'
+     &          //' >0 increases salinity'
+      diagUnits = 'g/m^2/s         '
+      diagCode  = 'SM      U1      '
       CALL DIAGNOSTICS_ADDTOLIST( diagNum,
      I     diagName, diagCode, diagUnits, diagTitle, 0, myThid )
 
       DO iTr = 1, RNF_nTr
-        WRITE(diagName,'(A,I2.2,A)') 'RNFtr', iTr, ' '
+        WRITE(diagName,'(A,I2.2,A)') 'RNFtf', iTr, ' '
         WRITE(diagTitle,'(A,I3,A)')
-     &    'pkg/rnf tendency term of runoff tracer',
-     &    iTr, ', named by RNF_SUMMARY'
-        diagUnits = 'tracer units/s  '
-        diagCode  = 'SMR     MR      '
+     &    'pkg/rnf surface flux of runoff tracer',
+     &    iTr, ', named by RNF_SUMMARY, >0 increases it'
+        diagUnits = 'kg/m^2/s.trc    '
+        diagCode  = 'SM      U1      '
         CALL DIAGNOSTICS_ADDTOLIST( diagNum,
      I       diagName, diagCode, diagUnits, diagTitle, 0, myThid )
       ENDDO

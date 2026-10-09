@@ -593,10 +593,15 @@ C                           [kg/m^2/s * g/kg]
 C     RNF_mXTr           :: (mC_n) = sum_s m_s*C_s,n for runoff tracer
 C                           n [kg/m^2/s * tracer units]
 C
-C--   The same five fields at the time level the tendency terms use
-C     (RNF_ap*). They are a copy of the fields above, except in the
-C     one case where the model's own freshwater flux lags: see
-C     RNF_lagFlds below.
+C     The heat of the runoff is applied from RNF_vflx, RNF_mflx,
+C     RNF_mflxT and RNF_mXT of the current step: RNF_EXF_RUNOFF turns
+C     them into the exf runoftemp field (package design, decision 3).
+C
+C--   The fields the salt and tracer terms use (RNF_ap*: m, (mS) and
+C     (mC_n)), at the time level of the model's own freshwater flux.
+C     They are a copy of the fields above, exchanged so that their
+C     halo is valid, except in the one case where the model's own
+C     freshwater flux lags: see RNF_lagFlds below.
 C
 C--   Work space of the global sums (filled by the master thread,
 C     read by every thread inside GLOBAL_SUM_VECTOR_RL)
@@ -758,9 +763,11 @@ C                     runoff tracer n feeds. A <NAME> with no matching
 C                     PTRACERS_names entry stops the run
 C     RNF_trNam    :: the <NAME> of runoff tracer n, i.e. the variable
 C                     name without the runoff_ptracer_ prefix
-C     RNF_applyT   :: the temperature term can be non-zero, so
-C                     RNF_TENDENCY_APPLY_T has work to do
-C     RNF_applyS   :: idem for salinity. True also without
+C     RNF_applyT   :: the file supplies a runoff temperature, so
+C                     RNF_EXF_RUNOFF sets the exf field runoftemp and
+C                     EXF_MAPFIELDS adds the runoff heat to Qnet
+C     RNF_applyS   :: the salinity term of RNF_FORCING_SURF can be
+C                     non-zero. True also without
 C                     runoff_salinity when salt_EvPrRn is not 0,
 C                     because the water then still arrives at
 C                     salinity 0 while the model gave it salt_EvPrRn
@@ -781,9 +788,9 @@ C                     (package design, decision 3, "S = 0")
       COMMON /RNF_SERIES_C/
      &     RNF_trNam
 
-C--   Time level of the tendency terms (package design, decision 3,
-C     "Time level"). The package fields must belong to the same step
-C     as the freshwater flux the model uses for its own temperature,
+C--   Time level of the salt and tracer terms (package design,
+C     decision 3, "Time level"). The package fields must belong to the
+C     same step as the freshwater flux the model uses for its own
 C     salinity and tracer terms. That flux is EmPmR of the current
 C     step in branches L and U and PmEpR of the current step in
 C     branch N with staggerTimeStep, but PmEpR of the PREVIOUS step
@@ -799,7 +806,7 @@ C                    i.e. branch N without staggerTimeStep
 C     RNF_curIter :: iteration of RNF_vflx and the other dense fields
 C                    (RNF_noIter: nothing built yet)
 C     RNF_apIter  :: iteration of the RNF_ap* fields, the ones the
-C                    tendency routines read (RNF_noIter: none yet)
+C                    surface routines read (RNF_noIter: none yet)
       LOGICAL RNF_lagFlds
       COMMON /RNF_TLEV_L/ RNF_lagFlds
 
@@ -855,15 +862,12 @@ C--   Dense per-tile fields
      &     RNF_vflx, RNF_mflx, RNF_mflxT,
      &     RNF_mXT, RNF_mXS, RNF_mXTr
 
-C--   The same, at the time level of the tendency terms
+C--   The salt and tracer ones, at the time level of those terms
       _RL RNF_apMflx (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
-      _RL RNF_apMflxT(1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
-      _RL RNF_apXT   (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
       _RL RNF_apXS   (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy)
       _RL RNF_apXTr  (1-OLx:sNx+OLx,1-OLy:sNy+OLy,nSx,nSy,RNF_nTr)
       COMMON /RNF_APPLY_R/
-     &     RNF_apMflx, RNF_apMflxT,
-     &     RNF_apXT, RNF_apXS, RNF_apXTr
+     &     RNF_apMflx, RNF_apXS, RNF_apXTr
 
 C--   Work space of the global sums and of the NetCDF reads
       _RL RNF_sumWrk(nSx,nSy,RNF_nBuf)

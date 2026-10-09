@@ -13,7 +13,9 @@ C !DESCRIPTION:
 C     Set the exf field "runoff" (m/s) from the sparse runoff volume
 C     flux of the current step (package design, decision 2), and refuse
 C     a cell at which one step of that runoff would add more than
-C     RNF_cellVolMax of the cell's own top-layer volume.
+C     RNF_cellVolMax of the cell's own top-layer volume. With a runoff
+C     temperature in the file, also set the exf field "runoftemp"
+C     (see below).
 C     Called from EXF_GETFFIELDS after the reads of the dense runoff
 C     and runoff temperature files and before the control variables
 C     are added, so that exf and everything downstream (EmPmR, the
@@ -34,10 +36,10 @@ C     available together -- rA (through RNF_vflx, which is already a
 C     flux per unit area), the top-layer thickness and the time step
 C     -- and where the field that is actually applied exists. That is
 C     a statement about this routine and not an exclusivity claim
-C     about the package: RNF_LOAD_AT also has rA, and the tendency
-C     routines also have drF and hFacC. What they do not have is the
-C     assembled per-cell field together with the step it is applied
-C     over. The bound is on the dimensionless ratio
+C     about the package: RNF_LOAD_AT also has rA, and any routine can
+C     read drF and hFacC. What they do not have is the assembled
+C     per-cell field together with the step it is applied over. The
+C     bound is on the dimensionless ratio
 C
 C       f(c) = |RNF_vflx(c)|*deltaTFreeSurf / ( drF(ks)*hFacC(c,ks) )
 C
@@ -82,6 +84,50 @@ C     of MAIN LOOP (4.52E-2 s of 3.999 s before, 4.56-4.80E-2 s of
 C     3.962-4.047 s after, four samples), so the added cost is inside
 C     the run-to-run scatter of the host, below about 60 microseconds
 C     per step on a 20x16 grid of four tiles.
+C
+C     **The runoff temperature.** When the file carries a temperature
+C     (RNF_applyT), this routine also sets the exf field runoftemp,
+C     and EXF_MAPFIELDS then adds the heat of the runoff to Qnet with
+C     the one formula the dense runoftempfile path uses,
+C     Cp*(theta - runoftemp)*runoff*rhoConstFresh
+C     (pkg/exf/exf_mapfields.F, the ALLOW_RUNOFTEMP block, which is
+C     enabled for RNF_applyT as well as for a runoftempfile). That is
+C     MITgcm's existing convention for the heat of runoff, so the heat
+C     reaches KPP, TFLUX and the sea-ice packages as the dense path's
+C     does (package design, decision 3, revised by RUNOFF-031). The
+C     field needs ALLOW_RUNOFTEMP, which RNF_CHECK requires of a file
+C     with runoff_temperature. In each cell
+C
+C       runoftemp = [ (mT) + (m - m_T)*theta ] / m   where m > 0,
+C       runoftemp = 0                               where m = 0,
+C
+C     i.e. the flux-weighted mean temperature of the sources that feed
+C     the cell, with the surface temperature theta standing in for a
+C     source whose temperature is missing: that water enters at theta,
+C     as runoff without a runoftempfile does on the dense path, and
+C     contributes nothing to Qnet. Two cases are written separately
+C     so that they are exact rather than within round-off: every
+C     source with a temperature (m_T = m, in which case the two sums
+C     are bitwise equal, see RNF_LOAD_AT) gives (mT)/m, and none with
+C     one gives theta itself, so that the Qnet term of such a cell is
+C     exactly zero. Where there is no runoff the value is not used by
+C     the formula, whose factor runoff is zero there; it is 0 and not
+C     theta because EXF_CHECK_RANGE refuses a runoftemp below -2 degC
+C     in any wet cell at nIter0. The theta read is theta(ks), the one
+C     EXF_MAPFIELDS reads, of the same state: nothing between
+C     EXF_GETFFIELDS and EXF_MAPFIELDS changes it.
+C     The fields are those of the current step (RNF_mflx, RNF_mflxT,
+C     RNF_mXT), the step the runoff field itself belongs to, which is
+C     what the dense runoftemp is read for; the time-level rule of
+C     RNF_FIELDS_LOAD concerns the salt and tracer terms only.
+C
+C     RNFqnet, the diagnostic of that heat, is the term EXF_MAPFIELDS
+C     adds, computed here with the same expression and operands: the
+C     contribution of the runoff to Qnet in W/m^2, > 0 decreases
+C     theta, as Qnet itself. It is the runoff before the control
+C     xx_runoff is added (exf_getffields.F), so it differs from what
+C     EXF_MAPFIELDS applies by the control's share, and like Qnet it is
+C     the open-water value, before pkg/seaice or pkg/thsice scale it.
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -89,6 +135,7 @@ C !USES: ===============================================================
 #include "EEPARAMS.h"
 #include "PARAMS.h"
 #include "GRID.h"
+#include "DYNVARS.h"
 #include "RNF_SIZE.h"
 #include "RNF.h"
 #ifdef ALLOW_EXF
@@ -126,6 +173,10 @@ C  nMsg                 :: messages this thread has printed
       INTEGER nErr, nMsg
       _RL     hTop, vLim
       CHARACTER*(MAX_LEN_MBUF) msgBuf
+#ifdef ALLOW_RUNOFTEMP
+C  qLoc                 :: the runoff heat term of EXF_MAPFIELDS [W/m^2]
+      _RL     qLoc(1-OLx:sNx+OLx,1-OLy:sNy+OLy)
+#endif /* ALLOW_RUNOFTEMP */
 CEOP
 
       kSurf = 1
@@ -177,6 +228,43 @@ C       skipped before the thickness is looked up.
           ENDIF
          ENDDO
         ENDDO
+
+#ifdef ALLOW_RUNOFTEMP
+C--     The temperature the runoff of each cell enters at, and the
+C       heat EXF_MAPFIELDS will add to Qnet for it
+        IF ( RNF_applyT ) THEN
+         DO j = 1-OLy, sNy+OLy
+          DO i = 1-OLx, sNx+OLx
+           qLoc(i,j) = 0. _d 0
+          ENDDO
+         ENDDO
+         DO j = 1, sNy
+          DO i = 1, sNx
+           IF ( RNF_mflx(i,j,bi,bj) .EQ. 0. _d 0 ) THEN
+            runoftemp(i,j,bi,bj) = 0. _d 0
+           ELSEIF ( RNF_mflxT(i,j,bi,bj).EQ.RNF_mflx(i,j,bi,bj) ) THEN
+            runoftemp(i,j,bi,bj) = RNF_mXT(i,j,bi,bj)
+     &                            /RNF_mflx(i,j,bi,bj)
+           ELSEIF ( RNF_mflxT(i,j,bi,bj) .EQ. 0. _d 0 ) THEN
+            runoftemp(i,j,bi,bj) = theta(i,j,kSurf,bi,bj)
+           ELSE
+            runoftemp(i,j,bi,bj) = ( RNF_mXT(i,j,bi,bj)
+     &         + ( RNF_mflx(i,j,bi,bj) - RNF_mflxT(i,j,bi,bj) )
+     &          *theta(i,j,kSurf,bi,bj) )/RNF_mflx(i,j,bi,bj)
+           ENDIF
+           qLoc(i,j) = HeatCapacity_Cp
+     &       *( theta(i,j,kSurf,bi,bj) - runoftemp(i,j,bi,bj) )
+     &       *RNF_vflx(i,j,bi,bj)*rhoConstFresh
+          ENDDO
+         ENDDO
+#ifdef ALLOW_DIAGNOSTICS
+         IF ( useDiagnostics ) THEN
+          CALL DIAGNOSTICS_FILL( qLoc, 'RNFqnet ', 0, 1, 2,
+     &                           bi, bj, myThid )
+         ENDIF
+#endif /* ALLOW_DIAGNOSTICS */
+        ENDIF
+#endif /* ALLOW_RUNOFTEMP */
 
        ENDDO
       ENDDO

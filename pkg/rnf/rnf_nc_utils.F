@@ -506,8 +506,8 @@ C     need another build (two ptracers of the same name, and a model
 C     compiled without pkg/ptracers).
 C
 C     Refusing an unmatched name is what keeps a tracer from being
-C     silently dropped: with no match there is no tendency array to
-C     add it to, so the water would arrive without it and nothing in
+C     silently dropped: with no match there is no surfaceForcingPTr
+C     to add it to, so the water would arrive without it and nothing in
 C     the log would say so. Setting RNF_usePtracers=.FALSE. is the
 C     way to read such a file on purpose.
 

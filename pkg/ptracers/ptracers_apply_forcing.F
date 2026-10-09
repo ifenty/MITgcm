@@ -77,15 +77,6 @@ C     because it is needed by KPP_TRANSPORT_PTR.
       ENDIF
 #endif /* ALLOW_GCHEM */
 
-#ifdef ALLOW_RNF
-      IF ( useRNF ) THEN
-        CALL RNF_TENDENCY_APPLY_PTR(
-     U                 gPtracer,
-     I                 iMin,iMax,jMin,jMax, k, bi, bj,
-     I                 iTracer, myTime, myIter, myThid )
-      ENDIF
-#endif /* ALLOW_RNF */
-
       IF ( k .EQ. kSurface ) THEN
 c      DO j=jMin,jMax
 c       DO i=iMin,iMax

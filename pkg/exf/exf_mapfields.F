@@ -61,6 +61,10 @@ C     == global variables ==
 #include "EXF_PARAM.h"
 #include "EXF_CONSTANTS.h"
 #include "EXF_FIELDS.h"
+#ifdef ALLOW_RNF
+# include "RNF_SIZE.h"
+# include "RNF.h"
+#endif
 #ifdef ALLOW_AUTODIFF_TAMC
 # include "tamc.h"
 #endif
@@ -197,7 +201,13 @@ C--   Account for energy content of Evap:
 C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
 #endif /* ALLOW_ATM_TEMP */
 #if defined(ALLOW_RUNOFF) && defined(ALLOW_RUNOFTEMP)
-          IF ( runoftempfile .NE. ' ' ) THEN
+C     pkg/rnf (sparse runoff) sets runoftemp itself when its file has
+C     a runoff temperature (RNF_applyT), see S/R RNF_EXF_RUNOFF
+          IF ( runoftempfile .NE. ' '
+#ifdef ALLOW_RNF
+     &         .OR. RNF_applyT
+#endif
+     &       ) THEN
 C--   Add energy content of RunOff
            DO j = 1, sNy
             DO i = 1, sNx

@@ -84,8 +84,6 @@ C     RNF_EXF_RUNOFF does not touch
           RNF_mXT(i,j,bi,bj) = 0. _d 0
           RNF_mXS(i,j,bi,bj) = 0. _d 0
           RNF_apMflx(i,j,bi,bj) = 0. _d 0
-          RNF_apMflxT(i,j,bi,bj) = 0. _d 0
-          RNF_apXT(i,j,bi,bj) = 0. _d 0
           RNF_apXS(i,j,bi,bj) = 0. _d 0
          ENDDO
         ENDDO

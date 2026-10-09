@@ -217,15 +217,17 @@ C     pkg/shelfice). Schema 1.0 allows only the surface.
       kSurf = 1
       IF ( usingPCoords ) kSurf = Nr
 
-C--   Which time level the tendency terms must use (package design,
-C     decision 3, "Time level"). The model applies its own
-C     temperature, salinity and tracer terms with the freshwater flux
-C     of the current step, except in the nonlinear-free-surface (or
+C--   Which time level the salt and tracer terms must use (package
+C     design, decision 3, "Time level"). The model applies its own
+C     salinity and tracer terms with the freshwater flux of the
+C     current step, except in the nonlinear-free-surface (or
 C     pressure-coordinate) real-freshwater-flux branch without
 C     staggerTimeStep, where PmEpR is the flux of the previous step
 C     (model/src/integr_continuity.F:172-179). The package terms
-C     follow, or the heat budget of each step would be off by
-C     (m_previous - m_current)*theta*mass2rUnit.
+C     follow, or the salt budget of each step would be off by
+C     (m_previous - m_current)*S_ref*mass2rUnit. The heat does not:
+C     it goes through the exf runoftemp field with the runoff of the
+C     current step, as the dense path's does.
       RNF_lagFlds = ( nonlinFreeSurf.GT.0 .OR. usingPCoords )
      &              .AND. useRealFreshWaterFlux
      &              .AND. .NOT.staggerTimeStep
@@ -477,11 +479,11 @@ C     the run below (package design, decision 4).
      U     errCount,
      I     myThid )
 
-C--   Whether each tendency term can be non-zero at all. The
-C     temperature term is the mass flux of the sources that carry a
-C     temperature times the difference from the reference, so without
-C     runoff_temperature it is identically zero and the routine
-C     returns without touching gT. The salinity term is
+C--   Whether each term can be non-zero at all. Without
+C     runoff_temperature the package leaves the exf runoftemp field and
+C     its EXF_MAPFIELDS term alone, so the runoff enters at the
+C     surface temperature as on the dense path without a
+C     runoftempfile. The salinity term is
 C     [(mS) - m*S_ref]: without runoff_salinity (mS) is zero, so it
 C     vanishes only when S_ref is zero as well, i.e. when
 C     salt_EvPrRn = 0, its default. With any other value the water
@@ -988,7 +990,7 @@ C     read a record, so that RNF_INIT_VARIA can be called twice.
 C--   Print the package parameters and what the read found
       CALL RNF_SUMMARY( myThid )
 
-C--   Register the diagnostics of the applied tendency terms
+C--   Register the diagnostics of the applied surface terms
 #ifdef ALLOW_DIAGNOSTICS
       IF ( useDiagnostics ) THEN
         CALL RNF_DIAGNOSTICS_INIT( myThid )

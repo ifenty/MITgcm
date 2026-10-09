@@ -151,6 +151,16 @@ C-    end local-surface-tracer / uniform-value distinction
 
       ENDIF
 
+#ifdef ALLOW_RNF
+C--   Sparse runoff: passive-tracer content of the runoff, which
+C     S/R EXTERNAL_FORCING_SURF added to the field reset above
+      IF ( useRNF ) THEN
+        CALL RNF_FORCING_SURF_PTR( .FALSE.,
+     I        bi, bj, iMin, iMax, jMin, jMax,
+     I        myTime, myIter, myThid )
+      ENDIF
+#endif /* ALLOW_RNF */
+
 C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
 
 #endif /* ALLOW_PTRACERS */

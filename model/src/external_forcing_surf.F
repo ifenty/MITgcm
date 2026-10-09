@@ -399,6 +399,15 @@ c         ENDDO
         ENDIF
 #endif /* ALLOW_SHELFICE */
 
+#ifdef ALLOW_RNF
+C--   Sparse runoff: salt and passive-tracer content of the runoff
+        IF ( useRNF ) THEN
+          CALL RNF_FORCING_SURF(
+     I                  bi, bj, iMin, iMax, jMin, jMax,
+     I                  myTime, myIter, myThid )
+        ENDIF
+#endif /* ALLOW_RNF */
+
 C--   end bi,bj loops.
        ENDDO
       ENDDO

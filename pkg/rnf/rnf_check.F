@@ -39,6 +39,22 @@ C       useShelfIce is true: SHELFICE_READPARMS returns before it
 C       sets the default otherwise.
 C     o USE_OLD_EXTERNAL_FORCING defined: the package has no hooks in
 C       EXTERNAL_FORCING_T/S.
+C     o a file with runoff_temperature in a build without
+C       ALLOW_RUNOFTEMP: the heat of the runoff goes through the exf
+C       field runoftemp and the EXF_MAPFIELDS term that uses it
+C       (package design, decision 3), which exist only with that
+C       option, as for a dense runoftempfile (EXF_CHECK). Without it
+C       the temperature would be read and silently not applied.
+C       RNF_useTemp = .FALSE. reads such a file on purpose.
+C     o pkg/longstep stepping the ptracers with LS_nIter other than 1
+C       while the file feeds at least one of them (RUNOFF-043, owner
+C       decision 2026-10-09, option C): the tracer term is that of the
+C       current step while pkg/longstep applies the long-step average
+C       of the freshwater flux (LS_fwFlux), so the two would belong to
+C       different times. LS_nIter = 1, or a file without tracers, is
+C       exact and is not refused. RNF_usePtracers = .FALSE. reads the
+C       file without its tracers. RNF_nTrUse is set by RNF_NC_SERIES in
+C       RNF_INIT_FIXED, which has run by now.
 C
 C     The refusals that need the file itself (its header, its table
 C     entries and its targets) are in RNF_INIT_FIXED, which has
@@ -68,6 +84,9 @@ C !USES: ===============================================================
 #ifdef ALLOW_SHELFICE
 # include "SHELFICE.h"
 #endif /* ALLOW_SHELFICE */
+#ifdef ALLOW_LONGSTEP
+# include "LONGSTEP_PARAMS.h"
+#endif /* ALLOW_LONGSTEP */
 
 C !INPUT PARAMETERS: ===================================================
 C  myThid               :: my thread Id number
@@ -83,6 +102,11 @@ C  errCount             :: number of fatal errors detected
 C  msgBuf               :: message buffer
       INTEGER errCount
       CHARACTER*(MAX_LEN_MBUF) msgBuf
+#ifdef ALLOW_LONGSTEP
+      INTEGER k, iL
+      INTEGER  ILNBLNK
+      EXTERNAL ILNBLNK
+#endif /* ALLOW_LONGSTEP */
 CEOP
 
       _BEGIN_MASTER(myThid)
@@ -160,6 +184,47 @@ C--   An ice-shelf edge that moves during the run
        ENDIF
       ENDIF
 #endif /* ALLOW_SHELFICE */
+
+#if defined(ALLOW_EXF) && defined(ALLOW_RUNOFF)
+# ifndef ALLOW_RUNOFTEMP
+C--   The runoff heat needs the exf runoftemp field
+      IF ( RNF_hasTemp ) THEN
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: the file has',
+     &    ' runoff_temperature, which needs "#define ALLOW_RUNOFTEMP"'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: in EXF_OPTIONS.h',
+     &    ' (pkg/rnf applies it through the exf runoftemp field),'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: or RNF_useTemp=.FALSE.',
+     &    ' in data.rnf to read the file without it'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        errCount = errCount + 1
+      ENDIF
+# endif /* ndef ALLOW_RUNOFTEMP */
+#endif /* ALLOW_EXF and ALLOW_RUNOFF */
+
+#ifdef ALLOW_LONGSTEP
+C--   pkg/longstep with a long step, and runoff tracers. LS_nIter is
+C     set only when usePTRACERS is (LONGSTEP_READPARMS returns before
+C     it otherwise), hence the nested test.
+      IF ( usePTRACERS .AND. RNF_nTrUse.GE.1 ) THEN
+       IF ( LS_nIter .NE. 1 ) THEN
+        WRITE(msgBuf,'(2A,I6,A)') 'RNF_CHECK: pkg/longstep with',
+     &    ' LS_nIter =', LS_nIter, ' cannot take runoff tracers:'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        DO k = 1, RNF_nTrUse
+          iL = MAX( 1, ILNBLNK(RNF_trNam(k)) )
+          WRITE(msgBuf,'(3A)') 'RNF_CHECK:   runoff_ptracer_',
+     &      RNF_trNam(k)(1:iL), ' of the file'
+          CALL PRINT_ERROR( msgBuf, myThid )
+        ENDDO
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: use LS_nIter = 1, or',
+     &    ' RNF_usePtracers=.FALSE. to read the file without them'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        errCount = errCount + 1
+       ENDIF
+      ENDIF
+#endif /* ALLOW_LONGSTEP */
 
 #ifdef USE_OLD_EXTERNAL_FORCING
 C--   No pkg/rnf hooks in the old forcing routines

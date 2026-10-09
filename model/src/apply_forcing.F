@@ -715,14 +715,6 @@ C Penetrating SW radiation
      I                   k, bi, bj, myTime, myIter, myThid )
 #endif /* ALLOW_ICEFRONT */
 
-#ifdef ALLOW_RNF
-      IF ( useRNF )
-     &     CALL RNF_TENDENCY_APPLY_T(
-     U                   gT_arr,
-     I                   iMin,iMax,jMin,jMax, k, bi,bj,
-     I                   myTime, myIter, myThid )
-#endif /* ALLOW_RNF */
-
 #ifdef ALLOW_SALT_PLUME
       IF ( useSALT_PLUME )
      &     CALL SALT_PLUME_TENDENCY_APPLY_T(
@@ -954,14 +946,6 @@ C     Ocean: Add salinity surface forcing (e.g., fresh-water) in surface level
      U                   gS_arr,
      I                   k, bi, bj, myTime, myIter, myThid )
 #endif /* ALLOW_ICEFRONT */
-
-#ifdef ALLOW_RNF
-      IF ( useRNF )
-     &     CALL RNF_TENDENCY_APPLY_S(
-     U                   gS_arr,
-     I                   iMin,iMax,jMin,jMax, k, bi,bj,
-     I                   myTime, myIter, myThid )
-#endif /* ALLOW_RNF */
 
 #ifdef ALLOW_SALT_PLUME
       IF ( useSALT_PLUME )

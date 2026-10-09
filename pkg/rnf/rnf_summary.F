@@ -23,7 +23,8 @@ C     RNF_hasTemp, RNF_hasSalt, RNF_nTrUse, RNF_applyT, RNF_applyS
 C     and one line per runoff tracer report which time series of the
 C     file are applied and which ptracer each tracer feeds, so that a
 C     run never looks as if it carried a property it did not; and
-C     RNF_lagFlds reports which time level the tendency terms use.
+C     RNF_lagFlds reports which time level the salt and tracer terms
+C     use.
 C     RNF_srcFluxMax, RNF_cellVolMax and the five lines after them
 C     report which runoff bounds the run was held to: EXF_CHECK_RANGE
 C     conditions two of its tests on useRNF, so a log that named
@@ -234,12 +235,13 @@ C     target_lon/target_lat or the grid's XC,YC are not degrees.
      &  ' /* target_lon,lat were checked against XC,YC */')
 
 C--   Which time series of the file are applied, and what each term
-C     will do (package design, decisions 3 and 4). RNF_applyT and
-C     RNF_applyS are false when the term they stand for is
-C     identically zero, in which case the tendency routine returns
-C     without touching the array. RNF_lagFlds says which time level
-C     the terms use: the current step, or the step before it in the
-C     one freshwater formulation where the model's own PmEpR lags.
+C     will do (package design, decisions 3 and 4). RNF_applyT says
+C     the package sets the exf runoftemp field, whose heat
+C     EXF_MAPFIELDS adds to Qnet; RNF_applyS is false when the salt
+C     term is identically zero, in which case surfaceForcingS is not
+C     touched. RNF_lagFlds says which time level the salt and tracer
+C     terms use: the current step, or the step before it in the one
+C     freshwater formulation where the model's own PmEpR lags.
       CALL WRITE_0D_L( RNF_hasTemp, INDEX_NONE,
      &  'RNF_hasTemp =',
      &  ' /* runoff_temperature is read from the file */')
@@ -251,13 +253,13 @@ C     one freshwater formulation where the model's own PmEpR lags.
      &  ' /* runoff tracers read from the file */')
       CALL WRITE_0D_L( RNF_applyT, INDEX_NONE,
      &  'RNF_applyT =',
-     &  ' /* the temperature term can be non-zero */')
+     &  ' /* pkg/rnf sets the exf runoftemp field */')
       CALL WRITE_0D_L( RNF_applyS, INDEX_NONE,
      &  'RNF_applyS =',
      &  ' /* the salinity term can be non-zero */')
       CALL WRITE_0D_L( RNF_lagFlds, INDEX_NONE,
      &  'RNF_lagFlds =',
-     &  ' /* the terms use the previous step (lagged PmEpR) */')
+     &  ' /* S, tracer terms use the previous step */')
       DO k = 1, RNF_nTrUse
         trNam = RNF_trNam(k)
         iL = MAX( 1, ILNBLNK(trNam) )
