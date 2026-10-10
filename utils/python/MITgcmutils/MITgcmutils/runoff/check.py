@@ -1,4 +1,4 @@
-"""Integrity checker for sparse-runoff NetCDF files (schema 1.0).
+"""Integrity checker for sparse-runoff NetCDF files (schema 1.1, which also covers 1.0 files).
 
 Implements every rule of section 9 of ``docs/runoff_schema.md`` (project
 repository). Each rule produces :class:`Finding` objects with the rule id, a
@@ -88,6 +88,13 @@ Implementation notes that the schema leaves to the checker:
   With ``fixed`` sampling the spacing across a file boundary must equal
   ``mitgcm_time_period``. ``_YYYY`` files must also share one offset of their
   first ``time`` value from 1 January of the year in their name.
+* T07 and R04 follow the minor schema version (``mitgcm_runoff_schema_version``):
+  in 1.0 ``target_level`` may only be 1, the surface cell of the column; from
+  1.1 on it is an absolute 1-based MITgcm level index, so T07 asks only that
+  it be at least 1, and R04 (with ``--grid-dir``) that it be at most the
+  number of levels of ``hFacC`` and wet at the target cell. Neither knows
+  ``RNF_applyAsRain``: the model refuses a non-surface target on its legacy
+  route at run time (``RNF_INIT_FIXED``).
 * R03 compares unpacked ``target_lon``/``target_lat``, which may be packed.
   The model reads them only to check them against ``XC``/``YC``, and skips
   that check when they are packed, so packing them stays an S07 pass.
@@ -559,6 +566,7 @@ class _FileContext:
         self.bounds = None       # float64 (n, 2) time_bnds when readable
         self.bounds_ok = None    # per-record: bounds finite and not fill
         self.targets = None      # dict of target arrays when readable
+        self.schema_minor = 0    # minor schema version (1: absolute target_level)
         self.bad_filters = {}    # variable -> disallowed HDF5 filters (P02)
 
     # -- collection -------------------------------------------------------
@@ -687,6 +695,9 @@ def _check_structure(ctx):
         elif int(parts[0]) not in S.SUPPORTED_MAJOR_VERSIONS:
             ctx.add("S02", "schema version {0} is not supported (this checker reads "
                     "major version(s) {1})".format(v, S.SUPPORTED_MAJOR_VERSIONS))
+        else:
+            # The minor version decides what target_level means (T07, R04).
+            ctx.schema_minor = int(parts[1])
 
     # S03
     for d in S.REQUIRED_DIMS:
@@ -992,12 +1003,22 @@ def _check_targets(ctx):
     ctx.add_many("T06", "target_fraction", np.nonzero(tf == 0)[0], lambda k: {
         "text": "{0}: target_fraction is exactly 0".format(ctx.target(k)),
         "source_index": ts[k] if src_ok[k] else None})
-    # T07
+    # T07: schema 1.0 allows only 1 (the surface cell of the column); from
+    # 1.1 on target_level is an absolute 1-based MITgcm level index, so it
+    # must be at least 1 here, and R04 checks it against the grid when one is
+    # given (at most Nr, and wet).
     if ctx.ok.get("target_level"):
-        ctx.add_many("T07", "target_level", np.nonzero(tl != 1)[0], lambda k: {
-            "text": "{0}: target_level={1}; schema {2} allows only 1".format(
-                ctx.target(k), tl[k], S.SCHEMA_VERSION),
-            "source_index": ts[k] if src_ok[k] else None})
+        if ctx.schema_minor >= S.LEVELS_MINOR_VERSION:
+            ctx.add_many("T07", "target_level", np.nonzero(tl < 1)[0], lambda k: {
+                "text": "{0}: target_level={1} is not a level index (schema {2}: an "
+                        "absolute 1-based MITgcm level, at least 1)".format(
+                            ctx.target(k), tl[k], S.SCHEMA_VERSION_LEVELS),
+                "source_index": ts[k] if src_ok[k] else None})
+        else:
+            ctx.add_many("T07", "target_level", np.nonzero(tl != 1)[0], lambda k: {
+                "text": "{0}: target_level={1}; schema {2} allows only 1".format(
+                    ctx.target(k), tl[k], S.SCHEMA_VERSION),
+                "source_index": ts[k] if src_ok[k] else None})
     # T08
     if ts.size > 1:
         unsorted = (ts[1:] < ts[:-1]) | ((ts[1:] == ts[:-1]) & (tc[1:] < tc[:-1]))
@@ -1457,7 +1478,7 @@ def _check_units(ctx):
 
 
 # ---------------------------------------------------------------------------
-# Grid checks (R01-R03)
+# Grid checks (R01-R04)
 
 
 class _Grid:
@@ -1471,6 +1492,29 @@ class _Grid:
         if name not in self._cache:
             self._cache[name] = _read_grid_field(self.dir, name)
         return self._cache[name]
+
+    def get_levels(self, name):
+        """Every level of ``name``, ``(nr, ny, nx)`` (R04)."""
+        key = (name, "levels")
+        if key not in self._cache:
+            self._cache[key] = _read_grid_levels(self.dir, name)
+        return self._cache[key]
+
+
+def _read_grid_levels(grid_dir, name):
+    """Global ``(nr, ny, nx)`` array of every level of ``name`` (a 2D file is
+    one level), for the level check R04 of a schema-1.1 ``target_level``."""
+    from ..mds import rdmds
+    base = os.path.join(grid_dir, name)
+    if not (glob.glob(base + ".[0-9][0-9][0-9].[0-9][0-9][0-9].meta")
+            or glob.glob(base + ".meta")):
+        raise CheckIOError("--grid-dir {0}: no {1}.meta or {1}.XXX.YYY.meta "
+                           "found".format(grid_dir, name))
+    try:
+        a = np.asarray(rdmds(base), dtype=np.float64)
+    except Exception as e:  # noqa: BLE001 - report any reader failure as I/O
+        raise CheckIOError("cannot read {0}: {1}".format(base, e))
+    return a[None] if a.ndim == 2 else a
 
 
 def _read_grid_field(grid_dir, name):
@@ -1496,7 +1540,7 @@ def _read_grid_field(grid_dir, name):
 
 
 def _check_grid(ctx, grid):
-    """R01-R03, and G01 when the grid's shape doesn't match (nx, ny).
+    """R01-R04, and G01 when the grid's shape doesn't match (nx, ny).
 
     ``target_lon``/``target_lat`` may be packed: the model reads them only
     to check them against ``XC``/``YC`` and skips that check when they are
@@ -1528,6 +1572,31 @@ def _check_grid(ctx, grid):
             "text": "{0} is on land (hFacC = 0 at level 1 in {1})".format(
                 ctx.target(k), grid.dir),
             "source_index": t["source"][k] if src_ok[k] else None})
+        # R04: a schema-1.1 target_level is an absolute level; it has to be a
+        # level of the grid and wet at the target cell, as RNF_INIT_FIXED
+        # requires. Only the rows R01 did not already refuse are tested.
+        if ctx.ok.get("target_level") and ctx.schema_minor >= S.LEVELS_MINOR_VERSION:
+            hf3 = grid.get_levels("hFacC")
+            nr = hf3.shape[0]
+            if hf3.shape[1:] == (ny, nx):
+                flat = hf3.reshape(nr, -1)
+                lev = t["level"]
+                wet_rows = rows[hf[cells[rows]] != 0]
+                in_range = (lev[wet_rows] >= 1) & (lev[wet_rows] <= nr)
+                out = wet_rows[~in_range]
+                ok = wet_rows[in_range]
+                dry = ok[flat[lev[ok] - 1, cells[ok]] == 0]
+                bad = np.sort(np.concatenate([out, dry]))
+
+                def _lev(k):
+                    if not 1 <= lev[k] <= nr:
+                        why = "is not a level of the grid (1 to Nr = {0})".format(nr)
+                    else:
+                        why = "is dry (hFacC = 0 at that level in {0})".format(grid.dir)
+                    return {"text": "{0}: target_level={1} {2}".format(
+                                ctx.target(k), lev[k], why),
+                            "source_index": t["source"][k] if src_ok[k] else None}
+                ctx.add_many("R04", "target_level", bad, _lev)
     if ctx.ok.get("target_cell_area"):
         rac = field2d("RAC")
         if rac is not None:
@@ -1801,7 +1870,7 @@ def _check_tables_only(ctx, multi):
 
 def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES,
                 tables_only=False):
-    """Check one runoff file, or several files of one data set, against schema 1.0.
+    """Check one runoff file, or several files of one data set, against schema 1.1 (or 1.0).
 
     Parameters
     ----------
@@ -1810,7 +1879,7 @@ def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES,
         and must be listed in time order.
     grid_dir : str or os.PathLike, optional
         Directory with MITgcm grid output (``hFacC``, ``RAC``, ``XC``, ``YC``,
-        global or tiled ``.meta/.data``); enables R01-R03.
+        global or tiled ``.meta/.data``); enables R01-R04 (R04 reads every level of hFacC).
     max_block_bytes : int
         Upper bound on the bytes of one block of time-series records read at once.
     tables_only : bool
@@ -1886,7 +1955,7 @@ def main(argv=None):
     parser.add_argument("files", nargs="+", metavar="FILE",
                         help="runoff file(s); several yearly files in time order")
     parser.add_argument("--grid-dir", metavar="DIR",
-                        help="MITgcm grid output (hFacC, RAC, XC, YC) for R01-R03")
+                        help="MITgcm grid output (hFacC, RAC, XC, YC) for R01-R04")
     parser.add_argument("--strict", action="store_true", help="fail on warnings too")
     parser.add_argument("--json", metavar="OUT", help="write the report as JSON")
     parser.add_argument("--tables-only", action="store_true",

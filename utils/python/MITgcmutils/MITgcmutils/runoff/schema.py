@@ -1,4 +1,4 @@
-"""Constants of the sparse-runoff NetCDF schema, version 1.0.
+"""Constants of the sparse-runoff NetCDF schema, version 1.1 (which also reads 1.0 files).
 
 This module is the single Python statement of the fixed vocabulary in
 ``docs/runoff_schema.md`` (project repository): the schema version, reserved
@@ -13,8 +13,17 @@ import re
 
 #: Version written by this package, and the major version the checker accepts
 #: (schema section 12: any minor version of a known major version is readable).
+#: A file whose targets are all at the surface cell is written as 1.0, which
+#: every reader of major version 1 reads the same way.
 SCHEMA_VERSION = "1.0"
 SUPPORTED_MAJOR_VERSIONS = (1,)
+#: Version written for a file whose ``target_level`` holds absolute levels
+#: (:func:`MITgcmutils.runoff.targets.distribute_levels`), and the first minor
+#: version of major version 1 in which ``target_level`` means an absolute
+#: 1-based MITgcm level index rather than "1, the surface cell" (schema 1.1,
+#: rule T07; RUNOFF-046).
+SCHEMA_VERSION_LEVELS = "1.1"
+LEVELS_MINOR_VERSION = 1
 
 #: Accepted NetCDF data models (section 1).
 NETCDF_FORMATS = ("NETCDF4", "NETCDF4_CLASSIC")
@@ -260,5 +269,5 @@ RULES = {
     "D01": "E", "D02": "E", "D03": "W", "D04": "W", "D05": "E", "D06": "W",
     "D07": "E", "D08": "W", "D09": "E",
     "U01": "E", "P01": "W", "P02": "E", "X01": "E",
-    "R01": "E", "R02": "E", "R03": "W",
+    "R01": "E", "R02": "E", "R03": "W", "R04": "E",
 }

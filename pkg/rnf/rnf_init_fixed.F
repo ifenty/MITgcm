@@ -125,7 +125,7 @@ C                          file sorted by source counts it once
       INTEGER nSrcNeed(nSx,nSy), nTgtNeed(nSx,nSy)
       INTEGER lastOvf(nSx,nSy)
       INTEGER fileNx, fileNy, majVer, minVer, iDot, ios
-      INTEGER kCol, nTgtDeep
+      INTEGER kCol, nTgtDeep, nLevs
       INTEGER iChunk, nChunk, iEnt0, nLoc, kEnt
       INTEGER iSrcF, cellF, levF, iRec, iLoc, kSrc
       INTEGER refuse
@@ -652,7 +652,8 @@ C         the value and the entry.
 C-            schema 1.1: an absolute level, which has to be a level
 C             of the grid. Whether it is wet is a question for the
 C             tile that owns the cell (step 5).
-             IF ( levF.LT.1 .OR. levF.GT.Nr ) THEN
+             nLevs = Nr
+             IF ( levF.LT.1 .OR. levF.GT.nLevs ) THEN
               badEnt = .TRUE.
               IF ( nMsgEnt .LT. RNF_maxErrMsg ) THEN
                 nMsgEnt = nMsgEnt + 1
@@ -662,7 +663,7 @@ C             tile that owns the cell (step 5).
                 WRITE(msgBuf,'(3A,I12,A,I4,A,I12)') 'RNF_INIT_FIXED:'
      &            //' RNF: target_level out of range: source ',
      &            srcId(1:idLen), ', target_level', levF,
-     &            ' (valid: 1 to Nr =', Nr, '), target entry (from 0)',
+     &            ' (valid: 1 to Nr =', nLevs, '), target entry (from 0)',
      &            kEnt
                 CALL PRINT_ERROR( msgBuf, myThid )
               ENDIF

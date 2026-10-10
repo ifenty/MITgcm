@@ -1,7 +1,7 @@
 """Sparse runoff forcing files for pkg/exf: schema, integrity checker, examples,
 target-table builder, dense-file converter.
 
-* :mod:`.schema`: constants of sparse-runoff schema 1.0 (names, units,
+* :mod:`.schema`: constants of sparse-runoff schema 1.1, which reads 1.0 files (names, units,
   calendars, tolerances), as specified in ``docs/runoff_schema.md``.
 * :func:`check_files` (module :mod:`.check`): validates one file or a set of
   yearly files and returns a :class:`~.check.Report` of rule findings. The
@@ -11,7 +11,9 @@ target-table builder, dense-file converter.
 * :func:`build_targets` and :func:`write_targets` (module :mod:`.targets`):
   build the source, alias and target tables from source locations and MITgcm
   grid output (pointwise or spread emission), and write them to a new file or
-  into an existing runoff file. The command line is ``python -m
+  into an existing runoff file; :func:`distribute_levels` spreads the
+  targets of each source over the model levels of a depth range (schema 1.1
+  ``target_level``). The command line is ``python -m
   MITgcmutils.runoff.targets SOURCES --grid-dir DIR -o OUT [options]``.
 * :func:`dense_to_sparse` and :func:`sparse_to_dense` (module :mod:`.convert`):
   convert a dense exf ``runoffFile`` (m/s), with the grid and the exf timing
@@ -23,7 +25,7 @@ Requires ``netCDF4`` (with ``cftime``), installed by the ``runoff`` extra:
 is installed (k-d tree search) and a slower pure-numpy search otherwise.
 
 ``check_files``, ``Finding``, ``Report``, ``write_example``,
-``build_targets``, ``write_targets``, ``dense_to_sparse`` and
+``build_targets``, ``write_targets``, ``distribute_levels``, ``dense_to_sparse`` and
 ``sparse_to_dense`` are imported lazily, on first access
 (module ``__getattr__``, PEP 562). Importing :mod:`.check`, :mod:`.targets`
 or :mod:`.convert` eagerly here would put it in ``sys.modules`` before
@@ -37,12 +39,14 @@ from importlib import import_module
 from . import schema
 
 __all__ = ["check_files", "write_example", "build_targets", "write_targets",
+           "distribute_levels",
            "dense_to_sparse", "sparse_to_dense", "Finding", "Report", "schema"]
 
 #: Lazily imported exports: name -> submodule that defines it.
 _LAZY = {"check_files": "check", "Finding": "check", "Report": "check",
          "write_example": "example",
          "build_targets": "targets", "write_targets": "targets",
+         "distribute_levels": "targets",
          "dense_to_sparse": "convert", "sparse_to_dense": "convert"}
 
 

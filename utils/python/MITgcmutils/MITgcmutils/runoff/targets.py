@@ -1,8 +1,13 @@
-"""Build the source, alias and target tables of a sparse-runoff file (schema 1.0).
+"""Build the source, alias and target tables of a sparse-runoff file (schema 1.0, or 1.1
+with target levels).
 
 :func:`build_targets` places each source (a river mouth, a glacier terminus,
 ...) on an MITgcm grid and decides which wet surface cells receive its water,
-and with what fractions. :func:`write_targets` writes the resulting tables to
+and with what fractions. :func:`distribute_levels` optionally spreads each
+source's targets over the model levels of a depth range, one target entry per
+wet level with an absolute ``target_level`` (schema 1.1; the model's
+generalized route, ``RNF_applyAsRain = .FALSE.``, places each entry at its
+level). :func:`write_targets` writes the resulting tables to
 a new NetCDF file, or into an existing runoff file, replacing its tables. The
 time series (``runoff_flux`` and so on) are added separately.
 
@@ -20,7 +25,8 @@ Command line::
         -o OUT.nc [--into RUNOFF.nc] [--emission {pointwise,spread}]
         [--spread-type {gaussian,exponential,linear}] [--spread-scale X]
         [--cutoff C] [--max-snap-distance D] [--earth-radius R]
-        [--connectivity {latlon,exch2}] [--grid-name NAME] [--no-check]
+        [--connectivity {latlon,exch2}] [--depth-range TOP:BOTTOM]
+        [--below-floor {error,clip}] [--grid-name NAME] [--no-check]
 
 Exit status: 0 success, 1 invalid input or checker errors in the output, 2
 usage or I/O problem. Unless ``--no-check`` is given, the output is checked
@@ -247,7 +253,8 @@ import numpy as np
 
 from . import schema as S
 
-__all__ = ["build_targets", "write_targets", "read_sources", "read_grid", "wet_graph",
+__all__ = ["build_targets", "write_targets", "distribute_levels", "read_levels",
+           "read_sources", "read_grid", "wet_graph",
            "kernel_weight", "parse_distance", "TargetTables", "WetGraph", "BuildError",
            "main", "EARTH_RADIUS", "DEFAULT_MAX_SNAP_DISTANCE", "EMISSIONS",
            "SPREAD_TYPES", "CUTOFF_FACTOR", "LINEAR_CUTOFF_FACTOR"]
@@ -1448,6 +1455,10 @@ class TargetTables:
     connectivity: str = None
     periodic: bool = False
     earth_radius: float = EARTH_RADIUS
+    #: Absolute 1-based MITgcm level of each target, or None when every
+    #: target is the surface cell (the output of :func:`build_targets`).
+    #: Set by :func:`distribute_levels`; the file is then schema 1.1.
+    target_level: np.ndarray = None
 
     @property
     def comment(self):
@@ -1568,6 +1579,198 @@ def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
 
 
 # ---------------------------------------------------------------------------
+# Depth ranges (schema 1.1, RUNOFF-046)
+
+#: What :func:`distribute_levels` does with a target whose wet column ends
+#: above the top of the source's depth range.
+BELOW_FLOOR = ("error", "clip")
+
+
+def read_levels(grid_dir):
+    """The vertical grid of MITgcm grid output for :func:`distribute_levels`.
+
+    Returns a dict with ``hFacC`` ``(nr, ny, nx)`` (every level), ``RF``
+    ``(nr+1,)`` (interface heights, m, 0 at the rest-state surface and
+    decreasing downwards in z coordinates) and ``DRF`` ``(nr,)`` (level
+    thicknesses, m), read with :func:`MITgcmutils.mds.rdmds` from global or
+    tiled ``.meta/.data`` files. Raises :class:`OSError` when a field can't be
+    read.
+    """
+    from .check import _read_grid_levels
+    d = os.fspath(grid_dir)
+    out = {"hFacC": _read_grid_levels(d, "hFacC")}
+    for name in ("RF", "DRF"):
+        out[name] = np.ravel(_read_grid_levels(d, name)).astype(np.float64)
+    return out
+
+
+def distribute_levels(tables, grid, depth_ranges, *, below_floor="error"):
+    """Spread each source's targets over the model levels of a depth range.
+
+    Every target entry ``(s, c, f)`` of ``tables`` whose source ``s`` has a
+    depth range becomes one entry per wet level ``k`` of cell ``c`` that the
+    range overlaps, with ``target_level = k`` (absolute, 1-based) and the
+    share ``f * w_k / sum(w)``, where ``w_k`` is the thickness of the overlap
+    of the range with the wet part of level ``k``. The shares of one cell sum
+    to ``f`` (``math.fsum``; the largest absorbs the rounding residual), so
+    the fractions of every source still sum to 1. A source without a range
+    keeps its entries at level 1, the surface cell. The result is a new
+    :class:`TargetTables` with :attr:`~TargetTables.target_level` set, which
+    :func:`write_targets` writes as schema 1.1 (rule T07). This is the whole
+    of the depth-to-levels judgment: the model places each entry at the level
+    it is given (``RNF_INIT_FIXED``) and needs ``RNF_applyAsRain = .FALSE.``
+    (the default) for any entry that is not at level 1.
+
+    Parameters
+    ----------
+    tables : TargetTables
+        Surface tables, from :func:`build_targets`.
+    grid : str, os.PathLike or dict
+        MITgcm grid output directory, or a dict from :func:`read_levels`
+        (``hFacC`` with every level, ``RF``, ``DRF``). z coordinates only:
+        ``RF`` must start at 0 and decrease.
+    depth_ranges : dict
+        ``source_id -> (top, bottom)``: depths in m below the rest-state
+        surface (``-RF``), ``0 <= top <= bottom``. ``top == bottom`` is a
+        single depth, which goes to the one wet level that contains it.
+        Distances may be strings such as ``"5 m"``.
+    below_floor : {"error", "clip"}
+        A target cell whose wet column ends above ``top``: an error naming
+        the source, the cell and the column depth (the default), or
+        ``"clip"``, which puts that entry's whole share at the deepest wet
+        level of the column.
+
+    The wet part of a level is ``DRF(k) * hFacC(k)`` measured down from the
+    top of the level, the z-coordinate partial-cell convention for the
+    bottom level. A target whose top wet level is not level 1 (an ice-shelf
+    column, kTopC > 0) is an error, as ``RNF_INIT_FIXED`` refuses it.
+
+    Raises
+    ------
+    BuildError
+        An unknown source id, an invalid range, a grid that is not in z
+        coordinates or does not match ``tables``, an ice-shelf column, or a
+        range below the floor with ``below_floor="error"``. ``errors`` lists
+        all.
+    """
+    if below_floor not in BELOW_FLOOR:
+        raise BuildError("below_floor {0!r} is not one of {1}".format(
+            below_floor, ", ".join(BELOW_FLOOR)))
+    if tables.target_level is not None:
+        raise BuildError("the tables already have target levels")
+    if isinstance(grid, (str, bytes, os.PathLike)):
+        grid = read_levels(grid)
+    errors = []
+    try:
+        hf = np.asarray(grid["hFacC"], dtype=np.float64)
+        rf = np.ravel(np.asarray(grid["RF"], dtype=np.float64))
+        drf = np.ravel(np.asarray(grid["DRF"], dtype=np.float64))
+    except KeyError as e:
+        raise BuildError("grid: field {0} is missing (needed: hFacC, RF, DRF)".format(e))
+    if hf.ndim == 2:
+        hf = hf[None]
+    nr = hf.shape[0]
+    if hf.ndim != 3 or hf.shape[1:] != (tables.ny, tables.nx):
+        raise BuildError("grid: hFacC has shape {0}, not (nr, ny, nx) with (ny, nx) = "
+                         "({1}, {2})".format(hf.shape, tables.ny, tables.nx))
+    if rf.size != nr + 1 or drf.size != nr:
+        raise BuildError("grid: RF has {0} and DRF {1} values; hFacC has {2} levels, "
+                         "so RF needs {3} and DRF {2}".format(rf.size, drf.size, nr, nr + 1))
+    if rf[0] != 0.0 or not np.all(np.diff(rf) < 0):
+        raise BuildError("grid: RF must start at 0 and decrease (z coordinates); "
+                         "distribute_levels does not handle pressure coordinates")
+    flat = hf.reshape(nr, -1)
+    ztop = -rf[:-1]                      # depth of the top of each level, m
+    index = {sid: s for s, sid in enumerate(tables.source_id)}
+    ranges = {}
+    for sid, rng in depth_ranges.items():
+        if sid not in index:
+            errors.append("depth range given for unknown source_id {0!r}".format(sid))
+            continue
+        try:
+            top, bot = (parse_distance(x) for x in rng)
+        except (TypeError, ValueError) as e:
+            errors.append("source {0}: depth range {1!r}: {2}".format(sid, rng, e))
+            continue
+        if not (math.isfinite(top) and math.isfinite(bot) and 0.0 <= top <= bot):
+            errors.append("source {0}: depth range ({1!r}, {2!r}) needs 0 <= top <= "
+                          "bottom".format(sid, top, bot))
+            continue
+        ranges[index[sid]] = (top, bot)
+    if errors:
+        raise BuildError(errors)
+
+    out = {"source": [], "cell": [], "fraction": [], "level": [], "row": []}
+    for row in range(tables.target_cell.size):
+        s = int(tables.target_source[row])
+        c = int(tables.target_cell[row])
+        f = float(tables.target_fraction[row])
+        sid = tables.source_id[s]
+        wet = np.nonzero(flat[:, c] > 0)[0]
+        if wet.size and wet[0] != 0:
+            errors.append("source {0}: target cell {1} is under an ice shelf (top wet "
+                          "level {2}, kTopC > 0), which RNF_INIT_FIXED refuses".format(
+                              sid, c, int(wet[0]) + 1))
+            continue
+        if s not in ranges:
+            levels, shares = np.array([0]), np.array([f])
+        else:
+            top, bot = ranges[s]
+            wtop = ztop[wet]
+            wbot = wtop + drf[wet] * flat[wet, c]
+            if top == bot:
+                inside = np.nonzero((wtop <= top) & (top < wbot))[0]
+                if inside.size == 0 and wet.size and top == wbot[-1]:
+                    inside = np.array([wet.size - 1])
+                w = np.zeros(wet.size)
+                w[inside[:1]] = 1.0
+            else:
+                w = np.maximum(0.0, np.minimum(wbot, bot) - np.maximum(wtop, top))
+            if not wet.size or not np.any(w > 0):
+                depth = float(wbot[-1]) if wet.size else 0.0
+                if below_floor == "clip" and wet.size:
+                    w = np.zeros(wet.size)
+                    w[-1] = 1.0
+                else:
+                    errors.append("source {0}: depth range {1:g}-{2:g} m lies below the "
+                                  "wet column of target cell {3} ({4:g} m deep); use "
+                                  "below_floor='clip' to put it at the deepest wet "
+                                  "level".format(sid, top, bot, c, depth))
+                    continue
+            keep = w > 0
+            levels = wet[keep]
+            shares = f * _normalize(w[keep])
+            k = int(np.argmax(shares))
+            shares[k] += f - math.fsum(shares)
+        out["source"].append(np.full(levels.size, s, dtype=np.int64))
+        out["cell"].append(np.full(levels.size, c, dtype=np.int64))
+        out["fraction"].append(shares)
+        out["level"].append(levels + 1)
+        out["row"].append(np.full(levels.size, row, dtype=np.int64))
+    if errors:
+        raise BuildError(errors)
+    rows = np.concatenate(out["row"])
+    t = tables
+    return TargetTables(
+        nx=t.nx, ny=t.ny, source_id=list(t.source_id), source_lon=t.source_lon,
+        source_lat=t.source_lat, source_meta=dict(t.source_meta),
+        alias_source=t.alias_source, alias_name=list(t.alias_name),
+        alias_scheme=list(t.alias_scheme), source_snap_cell=t.source_snap_cell,
+        source_snap_distance=t.source_snap_distance,
+        source_emission=list(t.source_emission),
+        source_spread_type=list(t.source_spread_type),
+        source_spread_scale=t.source_spread_scale, source_cutoff=t.source_cutoff,
+        target_source=np.concatenate(out["source"]).astype(t.target_source.dtype),
+        target_cell=np.concatenate(out["cell"]).astype(t.target_cell.dtype),
+        target_fraction=np.concatenate(out["fraction"]),
+        target_cell_area=t.target_cell_area[rows].copy(),
+        target_lon=t.target_lon[rows].copy(), target_lat=t.target_lat[rows].copy(),
+        target_distance=t.target_distance[rows].copy(),
+        connectivity=t.connectivity, periodic=t.periodic, earth_radius=t.earth_radius,
+        target_level=np.concatenate(out["level"]).astype(np.int32))
+
+
+# ---------------------------------------------------------------------------
 # Writing
 
 #: Provenance variables (dimension ``source``) written by :func:`write_targets`.
@@ -1672,6 +1875,13 @@ def _write_tables(ds, t, write_ids):
     _put(ds, "target_fraction", (S.DIM_TARGET,), t.target_fraction, "f8",
          {"long_name": "share of the source flux sent to this cell", "units": "1",
           "comment": t.comment})
+    if t.target_level is not None:
+        _put(ds, "target_level", (S.DIM_TARGET,), t.target_level, "i4",
+             {"long_name": "absolute 1-based MITgcm level index k of this target "
+                           "(schema 1.1)",
+              "comment": "written by distribute_levels: the overlap of the source's "
+                         "depth range with the wet part of each level, "
+                         "DRF(k)*hFacC(k) below -RF(k)"})
     _put(ds, "target_cell_area", (S.DIM_TARGET,), t.target_cell_area, "f8",
          {"long_name": "horizontal cell area rA", "units": "m2"})
     _put(ds, "target_lon", (S.DIM_TARGET,), t.target_lon, "f8",
@@ -1747,9 +1957,14 @@ def write_targets(path, tables, *, into=None, history=None, attrs=None):
     return path
 
 
+def _version(t):
+    """Schema version of the tables: 1.1 with absolute levels, else 1.0."""
+    return S.SCHEMA_VERSION if t.target_level is None else S.SCHEMA_VERSION_LEVELS
+
+
 def _new_attrs(t, line, extra):
     g = {"Conventions": S.CONVENTIONS,
-         "mitgcm_runoff_schema_version": S.SCHEMA_VERSION,
+         "mitgcm_runoff_schema_version": _version(t),
          "mitgcm_grid_nx": np.int32(t.nx), "mitgcm_grid_ny": np.int32(t.ny),
          "title": "Sparse runoff source and target tables",
          "source": "{0} {1}".format(BUILDER, BUILDER_VERSION),
@@ -1798,6 +2013,10 @@ def _write_into(into, tmp, t, line, extra):
             old = g.get("history")
             g["history"] = line if not old else line + "\n" + str(old)
             g["mitgcm_grid_nx"], g["mitgcm_grid_ny"] = np.int32(t.nx), np.int32(t.ny)
+            # The new target table decides what target_level means, so the
+            # version follows it: 1.1 with levels, 1.0 without (the old
+            # target_level, if any, goes with the old target table).
+            g["mitgcm_runoff_schema_version"] = _version(t)
             g.setdefault("comment", t.comment)
             g.update(extra)
             dst.setncatts(g)
@@ -1896,6 +2115,14 @@ def main(argv=None):
                              "regular lat-lon block) or exch2 (cubed sphere, LLC, other "
                              "grids); default exch2 if DIR contains data.exch2, else "
                              "required")
+    parser.add_argument("--depth-range", metavar="TOP:BOTTOM",
+                        help="spread every source over the wet levels this depth range "
+                             "(m below the rest-state surface) overlaps, and write "
+                             "schema 1.1 absolute target_level values "
+                             "(distribute_levels; needs RF, DRF and 3D hFacC in DIR)")
+    parser.add_argument("--below-floor", choices=BELOW_FLOOR, default="error",
+                        help="with --depth-range, a cell whose wet column ends above TOP: "
+                             "an error, or clip to its deepest wet level")
     parser.add_argument("--grid-name", metavar="NAME", help="mitgcm_grid_name attribute")
     parser.add_argument("--no-check", action="store_true",
                         help="don't run the checker on the output")
@@ -1910,6 +2137,15 @@ def main(argv=None):
                                cutoff=args.cutoff, max_snap_distance=args.max_snap_distance,
                                earth_radius=args.earth_radius,
                                connectivity=args.connectivity)
+        if args.depth_range:
+            parts = args.depth_range.split(":")
+            if len(parts) != 2:
+                raise BuildError("--depth-range {0!r} is not TOP:BOTTOM".format(
+                    args.depth_range))
+            tables = distribute_levels(
+                tables, args.grid_dir,
+                {sid: (parts[0], parts[1]) for sid in tables.source_id},
+                below_floor=args.below_floor)
         attrs = {"mitgcm_grid_name": args.grid_name} if args.grid_name else None
         write_targets(args.output, tables, into=args.into, history=history, attrs=attrs)
     except BuildError as e:
