@@ -663,8 +663,8 @@ C             tile that owns the cell (step 5).
                 WRITE(msgBuf,'(3A,I12,A,I4,A,I12)') 'RNF_INIT_FIXED:'
      &            //' RNF: target_level out of range: source ',
      &            srcId(1:idLen), ', target_level', levF,
-     &            ' (valid: 1 to Nr =', nLevs, '), target entry (from 0)',
-     &            kEnt
+     &            ' (valid: 1 to Nr =', nLevs,
+     &            '), target entry (from 0)', kEnt
                 CALL PRINT_ERROR( msgBuf, myThid )
               ENDIF
              ENDIF
