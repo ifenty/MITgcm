@@ -3,11 +3,33 @@
 ## Purpose
 
 `pkg/rnf` reads runoff from a NetCDF file organized by source (a river, a
-glacier outlet) and hands it to `pkg/exf` as the `runoff` field. A dense
+glacier outlet) and puts it into the model at the cells, and the levels, that
+each source feeds. A dense
 `runofffile` stores one value per surface cell per record, and almost all of
 them are zero at high resolution. Here each source lists the ocean cells it
 feeds and the fraction of its flux that goes to each of them, and the time
 series are stored once per source.
+
+**Two routes, one per run**, chosen by `RNF_applyAsRain` in `data.rnf`:
+
+- **Generalized route** (`RNF_applyAsRain = .FALSE.`, the default): runoff
+  is a lateral input, not rain. The volume of each target entry,
+  `rhoConstFresh·flux·frac` in kg/s, is added to the model's interior mass
+  source `addMass` at that entry's own level (`RNF_ADD_MASS`), and its
+  temperature, salinity and tracers are tendencies at that level,
+  `[(mX) − m_X·X(k)]·mass2rUnit/(drF(k)·hFacC)` relative to the ambient
+  value (`RNF_TENDENCY_APPLY_T/S/PTR`, from `APPLY_FORCING_T/S` and
+  `PTRACERS_APPLY_FORCING`), with the model's own `temp_addMass`/
+  `salt_addMass` term on the runoff share cancelled. A schema-1.1 file can
+  put a target at any wet level, and one source on several levels of one
+  cell. It needs `#define ALLOW_ADDFLUID`, `selectAddFluid = 1` or `2` and a
+  blank `addMassFile`; `staggerTimeStep` avoids the model's one-step-lag
+  warning. Nothing reaches the exf `runoff` field, so `pkg/seaice`,
+  `pkg/thsice` and `pkg/bling` do not see this runoff. Diagnostics:
+  `RNFaddM`, `RNFgT`, `RNFgS`, `RNFtrNN` (three-dimensional).
+- **Legacy surface route** (`RNF_applyAsRain = .TRUE.`), refused for a file
+  with any target that is not its column's surface cell; everything below
+  in this section is this route, unchanged since RUNOFF-031.
 
 - **Volume:** the flux in m³/s is split by fraction, divided by the cell area
   and assigned to the exf `runoff` field in m/s. Everything downstream in exf
@@ -35,12 +57,12 @@ series are stored once per source.
     source's value and the value the model's freshwater formulation already
     gave the water. The volume, salt and tracers are not scaled by the ice.
 
-  Subsurface targets (not yet supported) will use tendency terms, as
-  `pkg/shelfice` does.
+  Targets below the surface are the generalized route's.
 
 The package needs `pkg/exf` (`pkg_depend`: `rnf +exf`) with `ALLOW_RUNOFF`
-defined, `ALLOW_RUNOFTEMP` too for a file with a temperature, and a build
-with NetCDF.
+defined on both routes (the record selection is exf's own code),
+`ALLOW_RUNOFTEMP` too for a file with a temperature on the legacy route, and
+a build with NetCDF.
 
 ## Status
 
@@ -52,8 +74,10 @@ time, assigns the exf `runoff` field at every step, and puts the heat, the salt
 and the tracer of the runoff into the surface flux fields (`runoftemp`/`Qnet`,
 `surfaceForcingS`, `surfaceForcingPTr`) at the target cells. Every diagnostic
 of decision 8 is registered and filled, and so is the monitor (`RNF_MONITOR`).
-What is not there yet: the adjoint (TAF) list files and the `addMass` path
-that interior and under-shelf targets need.
+Since RUNOFF-046 the default is the generalized route above, which places the
+volume in `addMass` and the properties as tendencies at each target's level.
+What is not there yet: the adjoint (TAF) list files, and targets under an ice
+shelf, which are refused on both routes (RUNOFF-020).
 
 **Time modes.** `constant` (one record), a fixed period with or without a
 repeat cycle, a monthly climatology (12 records, January to December,
@@ -286,13 +310,16 @@ id, or the table entry where no source can be named:
 | a record outside the time dimension of the file being read | the series does not cover the model time: it needs more records, a repeat cycle, or another period |
 | a missing dimension (`time`, `source`, `target`) or variable (`source_id`, `target_source`, `target_cell`, `target_fraction`, `runoff_flux`), or `runoff_flux` not dimensioned `(time, source)` | required input |
 | `target_source` or `target_cell` out of range | an out-of-range index would be placed on a tile by the integer division, or silently dropped |
-| `target_level` ≠ 1 | schema 1.0 allows only the surface cell |
+| `target_level` ≠ 1 in a schema-1.0 file, or outside `1..Nr` in a schema-1.1 one | schema 1.0 allows only the surface cell; in 1.1 it is an absolute level index |
+| a schema-1.1 `target_level` that is not a wet level of its column | the water would go into rock |
+| with `RNF_applyAsRain = .TRUE.`, any target whose level is not its column's surface cell | the legacy route puts the runoff into the surface fields, and the owner decided it is not to be extended below the surface |
 | `target_fraction` outside [0, 1] | a negative fraction can hide in a sum that is still 1 |
 | a source whose fractions do not sum to 1 within `RNF_fracTol` | mass would be lost; this is also how a target that no tile owns is caught (a blank exch2 tile, or a cell no facet uses) |
 | a target on land, beyond an open boundary (`maskInC` = 0), under an ice shelf (`kTopC` ≠ 0), or whose `target_cell_area` differs from `rA` by more than `RNF_areaTol` | the volume would be lost, or the file was built for another grid |
 | a missing value of `runoff_flux`, of `runoff_salinity` or of a tracer: not a number, above `RNF_fluxMax`, or equal to the `_FillValue` or `missing_value` of that variable | the model contract allows no missing flux, and a missing salinity or tracer has no defined meaning. A missing `runoff_temperature` **is** allowed: that source enters at the reference temperature, as a source without the variable does |
 | a `runoff_flux` that is present but above `RNF_srcFluxMax` in absolute value | nothing else bounds the magnitude of a sparse source, because `EXF_CHECK_RANGE` skips its runoff upper bound and exempts the runoff from its `sflux` bound when `useRNF`. The message names the source, the record, the value and the limit, and the refusal is counted apart from the missing values: an out-of-range value is present and wrong, a missing one is absent |
-| an applied runoff that adds more than `RNF_cellVolMax` of a target cell's top-layer volume in one time step | `RNF_srcFluxMax` is per source and per file, so several sources on one cell add up past it unseen — a converter index bug that collapses targets does exactly that. Checked in `RNF_EXF_RUNOFF` on every step, because the flux series changes between records even though the target table does not. The message names the cell (`i,j,bi,bj` and its `XC,YC`), the applied value and the limit; the count is summed with `GLOBAL_SUM_INT` so a cell on one tile stops every process |
+| on the generalized route: no `ALLOW_ADDFLUID`, `selectAddFluid` other than 1 or 2, or a non-blank `addMassFile` | the volume goes into `addMass`, which the model resets every step only then |
+| an applied runoff that adds more than `RNF_cellVolMax` of a target cell's top-layer volume in one time step (on the generalized route, of the volume of the cell at the target's own level, checked in `RNF_ADD_MASS`) | `RNF_srcFluxMax` is per source and per file, so several sources on one cell add up past it unseen — a converter index bug that collapses targets does exactly that. Checked in `RNF_EXF_RUNOFF` on every step, because the flux series changes between records even though the target table does not. The message names the cell (`i,j,bi,bj` and its `XC,YC`), the applied value and the limit; the count is summed with `GLOBAL_SUM_INT` so a cell on one tile stops every process |
 | a `runoff_ptracer_<NAME>` whose `<NAME>` matches no `PTRACERS_names` entry, or more than one, or any such variable in a run that does not use pkg/ptracers | there is no `surfaceForcingPTr` to add it to, so the water would arrive without the tracer and nothing would say so. `RNF_usePtracers=.FALSE.` is the way to read such a file on purpose |
 | more `runoff_ptracer_*` variables than `RNF_nTr`, or a name that is empty or longer than `RNF_idLen` | the message prints the number the file has |
 | a count above `RNF_nSrcTile` or `RNF_nTgtTile` on one tile | the message prints the value the bound needs |
