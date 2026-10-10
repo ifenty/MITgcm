@@ -30,11 +30,17 @@ C     report which runoff bounds the run was held to: EXF_CHECK_RANGE
 C     conditions two of its tests on useRNF, so a log that named
 C     neither relaxation nor the two package bounds that replace them
 C     would leave a reader unable to tell which bounds applied at all.
+C     A sixth, conditional line (RUNOFF-041) follows them only when
+C     dTtracerLev(1) differs from deltaTFreeSurf: it names both steps
+C     and their ratio and says that RNF_cellVolMax's dilution reading
+C     (not its primary volume reading) is looser by that factor. It is
+C     silent, not merely absent of content, when the two are equal.
 
 C !USES: ===============================================================
       IMPLICIT NONE
 #include "SIZE.h"
 #include "EEPARAMS.h"
+#include "PARAMS.h"
 #include "RNF_SIZE.h"
 #include "RNF.h"
 
@@ -54,9 +60,12 @@ C !FUNCTIONS: ==========================================================
 C !LOCAL VARIABLES: ====================================================
 C  blkLin               :: blank line
 C  msgBuf               :: message buffer
+C  dtRatio              :: dTtracerLev(1)/deltaTFreeSurf, when they
+C                          differ (RUNOFF-041)
       CHARACTER*1 blkLin
       CHARACTER*(MAX_LEN_MBUF) msgBuf
       CHARACTER*(RNF_idLen) trNam
+      _RL dtRatio
       INTEGER k, iL
 CEOP
 
@@ -190,6 +199,28 @@ C     here; the per-cell line is RUNOFF-040.
      &  ' of its top-layer volume per step'
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )
+
+C--   RUNOFF-041: RNF_cellVolMax's "fractional dilution" reading (as
+C     opposed to its primary "fractional volume change" reading, RNF.h)
+C     holds only where dTtracerLev(1) = deltaTFreeSurf. Report rather
+C     than bound (both reviewers recommended against bounding with
+C     MAX(deltaTFreeSurf,dTtracerLev(ks)), and Arch accepted): print
+C     the mismatch and its ratio when it occurs, so a run in that
+C     configuration says so in its own STDOUT instead of leaving the
+C     looser dilution reading unannounced. Silent (no WRITE at all)
+C     when the two are equal, which is every committed experiment
+C     today (lab_sea by default, cs32 by setting deltaTFreeSurf
+C     explicitly).
+      IF ( dTtracerLev(1) .NE. deltaTFreeSurf ) THEN
+        dtRatio = dTtracerLev(1)/deltaTFreeSurf
+        WRITE(msgBuf,'(A,1PE16.8,A,E16.8,A,E16.8,A)')
+     &    'RNF_SUMMARY: dTtracerLev(1) =', dTtracerLev(1),
+     &    ' differs from deltaTFreeSurf =', deltaTFreeSurf,
+     &    ': RNF_cellVolMax dilution reading is looser by their ratio',
+     &    dtRatio, '; the volume reading is unaffected'
+        CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
+     &                      SQUEEZE_RIGHT, myThid )
+      ENDIF
 
 C--   Array bounds of RNF_SIZE.h
       CALL WRITE_0D_I( RNF_nSrcTile, INDEX_NONE,

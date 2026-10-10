@@ -240,11 +240,34 @@ C                           explicitly; on that ratio an
 C                           asynchronously stepped set-up that left
 C                           the default would make the dilution
 C                           reading wrong by 72x while the volume
-C                           reading stayed right. No enrolled case can
-C                           see a mismatch. Whether to bound with
-C                           MAX(deltaTFreeSurf,dTtracerLev(ks)) is an
-C                           open design question, deliberately not
-C                           decided here.
+C                           reading stayed right.
+C                           RUNOFF-041 (owner decision 2026-10-07,
+C                           both reviewers recommending against
+C                           bounding, Arch accepting): settled as a
+C                           REPORT, not a bound change. RNF_SUMMARY
+C                           prints, only when dTtracerLev(1) differs
+C                           from deltaTFreeSurf, a line naming both
+C                           steps and their ratio and stating that
+C                           this dilution reading (not the primary
+C                           volume one) is looser by that factor
+C                           (rnf_summary.F). MAX(deltaTFreeSurf,
+C                           dTtracerLev(ks)) was considered and
+C                           rejected: deltaTFreeSurf is the step
+C                           integr_continuity.F:221 actually integrates
+C                           the free surface with, i.e. the bound's
+C                           PRIMARY reading, so MAX() would make one
+C                           constant stop having one physical meaning
+C                           across configurations -- the very property
+C                           that justified a fixed header constant over
+C                           a data.rnf parameter -- to fix a failure
+C                           mode that is missed detection in a
+C                           self-announcing set-up, never a blocked
+C                           user. tests/rnf/refusal_check.py's
+C                           mismatched_timesteps case now sets
+C                           deltaTFreeSurf unequal to dTtracerLev(1) on
+C                           purpose (lab_sea and cs32's own committed
+C                           data still leave them equal), so this is no
+C                           longer a mismatch no enrolled case can see.
 C                           Being dimensionless is the point: ONE
 C                           number serves every grid, resolution and
 C                           time step, which is what the pkg/exf
