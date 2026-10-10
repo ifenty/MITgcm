@@ -7,11 +7,63 @@ C !INTERFACE: ==========================================================
       SUBROUTINE RNF_FIELDS_LOAD( myTime, myIter, myThid )
 
 C !DESCRIPTION:
+C     The time-step entry of the package: put the sparse runoff of the
+C     current time step into the dense per-tile fields
+C     (RNF_FIELDS_BUILD), then write the output that depends on those
+C     fields alone, the input-field diagnostics (RNF_DIAGNOSTICS_FILL)
+C     and the runoff monitor (RNF_MONITOR); package design, decision 8.
+C     Called from LOAD_FIELDS_DRIVER before EXF_GETFORCING, with the
+C     same myTime and myIter that pkg/exf uses, so the monitor is
+C     written at the steps EXF_MONITOR is (pkg/exf/exf_getforcing.F
+C     calls it from the same LOAD_FIELDS_DRIVER step).
+C
+C     The output is here and not in RNF_FIELDS_BUILD because
+C     RNF_INIT_VARIA builds the fields of the start time as well, and
+C     that call is made before DIAGNOSTICS_SWITCH_ONOFF of the first
+C     FORWARD_STEP, where DIAGNOSTICS_FILL refuses to be called
+C     (pkg/diagnostics/diagnostics_fill.F: diag_pkgStatus must be
+C     ready2fillDiags). Both are output only: neither changes a field
+C     the model or the package reads (package design, decision 9).
+
+C !USES: ===============================================================
+      IMPLICIT NONE
+#include "SIZE.h"
+#include "EEPARAMS.h"
+
+C !INPUT PARAMETERS: ===================================================
+C  myTime               :: current time in simulation
+C  myIter               :: current iteration number
+C  myThid               :: my thread Id number
+      _RL     myTime
+      INTEGER myIter
+      INTEGER myThid
+CEOP
+
+#ifdef ALLOW_RNF
+      CALL RNF_FIELDS_BUILD( myTime, myIter, myThid )
+C--   As EXF_GETFORCING calls EXF_DIAGNOSTICS_FILL and EXF_MONITOR
+C     (pkg/exf/exf_getforcing.F:377-380): unconditioned by ALLOW_DIAGNOSTICS
+C     or ALLOW_MONITOR here, because each routine's own body is wrapped by
+C     its #ifdef and does nothing without it.
+      CALL RNF_DIAGNOSTICS_FILL( myTime, myIter, myThid )
+      CALL RNF_MONITOR( myTime, myIter, myThid )
+#endif /* ALLOW_RNF */
+
+      RETURN
+      END
+
+C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
+CBOP
+C !ROUTINE: RNF_FIELDS_BUILD
+
+C !INTERFACE: ==========================================================
+      SUBROUTINE RNF_FIELDS_BUILD( myTime, myIter, myThid )
+
+C !DESCRIPTION:
 C     Put the sparse runoff of the current time step into the dense
 C     per-tile fields, and make the set the salt and tracer terms read
-C     belong to the right time level.
-C     Called from LOAD_FIELDS_DRIVER before EXF_GETFORCING, with the
-C     same myTime that pkg/exf uses.
+C     belong to the right time level. Called by RNF_FIELDS_LOAD at
+C     every step and by RNF_INIT_VARIA for the start time.
 C
 C     RNF_LOAD_AT, below, does the work for one time: select the
 C     records, read what no buffer holds, combine the two records into
@@ -45,10 +97,10 @@ C     Which level each set holds is tracked by iteration number
 C     (RNF_curIter, RNF_apIter), not by model time, because
 C     myTime - deltaTClock of one step need not be bitwise the myTime
 C     of the step before it. RNF_INIT_VARIA calls this routine for
-C     the start time and LOAD_FIELDS_DRIVER calls it again at the
-C     first step with the same time and iteration; the second call
-C     then finds both sets already current and rebuilds the dense
-C     fields only.
+C     the start time and RNF_FIELDS_LOAD calls it again at the first
+C     step with the same time and iteration; the second call then
+C     finds both sets already current and rebuilds the dense fields
+C     only.
 
 C !USES: ===============================================================
       IMPLICIT NONE

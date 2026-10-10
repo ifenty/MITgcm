@@ -50,11 +50,10 @@ reads the file, places its target cells on the tiles of each process, checks
 the file and the targets, selects the time records that bracket the model
 time, assigns the exf `runoff` field at every step, and puts the heat, the salt
 and the tracer of the runoff into the surface flux fields (`runoftemp`/`Qnet`,
-`surfaceForcingS`, `surfaceForcingPTr`) at the target cells.
-What is not there yet: the diagnostics of the input fields and the monitor
-(`RNF_MONITOR`), the budget checks over time and over the domain, the adjoint
-(TAF) list files, and the `addMass` path that interior and under-shelf
-targets need.
+`surfaceForcingS`, `surfaceForcingPTr`) at the target cells. Every diagnostic
+of decision 8 is registered and filled, and so is the monitor (`RNF_MONITOR`).
+What is not there yet: the adjoint (TAF) list files and the `addMass` path
+that interior and under-shelf targets need.
 
 **Time modes.** `constant` (one record), a fixed period with or without a
 repeat cycle, a monthly climatology (12 records, January to December,
@@ -88,10 +87,11 @@ the year.
 | `rnf_fields_load.F` | `RNF_FIELDS_LOAD` decides the two time levels; `RNF_LOAD_AT` selects the records, reads the ones no buffer holds, interpolates or holds every series and builds the dense fields, tracing the selection at `RNF_debugLev` ≥ 3; `RNF_COPY_APPLY`/`RNF_ZERO_APPLY` keep, and exchange, the set the salt and tracer terms read | done |
 | `rnf_exf_runoff.F` | assigns the exf `runoff` field, and the exf `runoftemp` field when the file has a temperature | done |
 | `rnf_forcing_surf.F` | `RNF_FORCING_SURF` and `RNF_FORCING_SURF_PTR`: the salt and tracer terms in `surfaceForcingS` and `surfaceForcingPTr` | done |
-| `rnf_diagnostics_init.F` | registers `RNFqnet` (W/m², the runoff heat added to `Qnet`, > 0 decreases θ), `RNFsflx` (g/m²/s, the salt added to `surfaceForcingS`, > 0 increases salinity) and `RNFtfNN` (tracer·kg/m²/s, per runoff tracer), each the runoff's own contribution to the field it feeds, as the package hands it over: `RNFqnet` is the term added to exf `Qnet` before any sea-ice open-water scaling, so under `pkg/seaice` only `(1 − A)` of it reaches ocean and ice | done; the input-only diagnostics and the monitor are not |
+| `rnf_diagnostics_init.F` | registers all eight diagnostics of decision 8: the five input-field ones (`RNFvflx`, `RNFmflx`, `RNFtemp`, `RNFsaln`, `RNFnsrc`, filled by `rnf_diagnostics_fill.F`, below) and the three surface-flux ones, `RNFqnet` (W/m², the runoff heat added to `Qnet`, > 0 decreases θ), `RNFsflx` (g/m²/s, the salt added to `surfaceForcingS`, > 0 increases salinity) and `RNFtfNN` (tracer·kg/m²/s, per runoff tracer), each the runoff's own contribution to the field it feeds, as the package hands it over: `RNFqnet` is the term added to exf `Qnet` before any sea-ice open-water scaling, so under `pkg/seaice` only `(1 − A)` of it reaches ocean and ice | done |
+| `rnf_diagnostics_fill.F` | `RNF_DIAGNOSTICS_FILL`, called unconditionally at the end of `RNF_FIELDS_LOAD` (as `EXF_GETFORCING` calls `EXF_DIAGNOSTICS_FILL`), fills the five input-field diagnostics from the dense fields alone: `RNFvflx`/`RNFmflx` are `RNF_vflx`/`RNF_mflx` themselves; `RNFtemp` is `(mT)/m_T` where `m_T > 0`, else **0** (this package's own stated convention for "undefined": no runoff at all, or every source feeding the cell missing its temperature); `RNFsaln` is `(mS)/m` where `m > 0`, else 0; `RNFnsrc` counts the target entries owning the cell (schema rule T03 makes that the number of distinct sources) | done |
+| `rnf_monitor.F` | `RNF_MONITOR`, called unconditionally alongside `RNF_DIAGNOSTICS_FILL`, in the style of `pkg/exf/exf_monitor.F`: `MON_WRITESTATS_RL` of `RNF_vflx`; the global sums `Σ RNF_vflx·rA` (m³/s), `Σ Cp·RNF_mXT·rA` (W), `Σ RNF_mXS·rA` (g/s) and one per runoff tracer in use, each a `GLOBAL_SUM_TILE_RL` over a per-tile sum, so a 1- and a 2-process run print the same line; and the number of sources and target entries in use (`RNF_nSrcFile`, `RNF_nTgtOwned`, both already process-independent) | done |
 
-The monitor (`RNF_MONITOR`), the diagnostics of the input fields and the
-adjoint (TAF) list files are not there yet.
+The adjoint (TAF) list files are not there yet.
 
 ## Parameters
 
@@ -123,7 +123,8 @@ the name given is replaced, so `runoff.nc` and `runoff` both select
 file's time is model time in seconds from the reference date of its units;
 with `pkg/cal` it is refused, and the start date comes from the file or from
 `RNF_startDate1`/`RNF_startDate2`, as it does for a dense exf field.
-`RNF_monFreq` waits for the monitor.
+`RNF_monFreq` is `RNF_MONITOR`'s own interval; unset, it defaults to
+`monitorFreq`, as `data.rnf`'s own table says.
 
 **What the three switches do.** `RNF_INIT_FIXED` reports which of the three
 optional series the file carries and which ptracer each runoff tracer feeds,
@@ -330,7 +331,11 @@ terms: one against the analytic value of every case of the design's reference
 tables, one against the heat that `pkg/exf` applies through its own
 `runoftempfile` path, cell by cell and down to `TFLUX`, one that shows KPP and
 `TFLUX` see the runoff heat, and the budget closure of all of them over the
-domain.
+domain. It also holds the direct oracle of the five input-field diagnostics
+and the monitor (`tests/rnf/diagnostics_check.py`): each diagnostic against a
+reconstruction built from the file and the run's own grid, the monitor's
+global sums against the file's own source sums with the printed text
+required to match between 1 and 2 processes, and two must-fail mutants.
 
 ## Design
 

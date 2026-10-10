@@ -41,6 +41,10 @@ C     fac*sum(count0) + (1-fac)*sum(count1), so the pair is still the
 C     same two ways of adding up the same instant. The files are
 C     opened and closed by RNF_NC_READ_FLUX, so this routine may be
 C     called more than once.
+C
+C     The same pair, recomputed at every monitor time over the cells
+C     rather than over the target entries, is printed by RNF_MONITOR
+C     (rnf_vol_sum, rnf_flux_file).
 
 C !USES: ===============================================================
       IMPLICIT NONE
@@ -120,8 +124,10 @@ C     level"). Like the record buffers, these are not in a pickup.
 
 C--   The records of the start time, the source fluxes and the dense
 C     fields, so that they are set whichever routine of the model asks
-C     for them first
-      CALL RNF_FIELDS_LOAD( startTime, nIter0, myThid )
+C     for them first. RNF_FIELDS_BUILD and not RNF_FIELDS_LOAD: the
+C     diagnostics cannot be filled before the first time step, and the
+C     monitor belongs to the steps (RNF_FIELDS_LOAD)
+      CALL RNF_FIELDS_BUILD( startTime, nIter0, myThid )
 
       _BEGIN_MASTER(myThid)
       fluxSrc = RNF_fluxFile
