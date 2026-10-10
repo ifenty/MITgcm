@@ -110,9 +110,11 @@ the year.
 | `rnf_init_varia.F` | zeroes the fields, empties the record buffers, loads the records of the start time and reports the flux | done |
 | `rnf_fields_load.F` | `RNF_FIELDS_LOAD` decides the two time levels; `RNF_LOAD_AT` selects the records, reads the ones no buffer holds, interpolates or holds every series and builds the dense fields, tracing the selection at `RNF_debugLev` ≥ 3; `RNF_COPY_APPLY`/`RNF_ZERO_APPLY` keep, and exchange, the set the salt and tracer terms read | done |
 | `rnf_exf_runoff.F` | assigns the exf `runoff` field, and the exf `runoftemp` field when the file has a temperature | done |
-| `rnf_forcing_surf.F` | `RNF_FORCING_SURF` and `RNF_FORCING_SURF_PTR`: the salt and tracer terms in `surfaceForcingS` and `surfaceForcingPTr` | done |
-| `rnf_diagnostics_init.F` | registers all eight diagnostics of decision 8: the five input-field ones (`RNFvflx`, `RNFmflx`, `RNFtemp`, `RNFsaln`, `RNFnsrc`, filled by `rnf_diagnostics_fill.F`, below) and the three surface-flux ones, `RNFqnet` (W/m², the runoff heat added to `Qnet`, > 0 decreases θ), `RNFsflx` (g/m²/s, the salt added to `surfaceForcingS`, > 0 increases salinity) and `RNFtfNN` (tracer·kg/m²/s, per runoff tracer), each the runoff's own contribution to the field it feeds, as the package hands it over: `RNFqnet` is the term added to exf `Qnet` before any sea-ice open-water scaling, so under `pkg/seaice` only `(1 − A)` of it reaches ocean and ice | done |
-| `rnf_diagnostics_fill.F` | `RNF_DIAGNOSTICS_FILL`, called unconditionally at the end of `RNF_FIELDS_LOAD` (as `EXF_GETFORCING` calls `EXF_DIAGNOSTICS_FILL`), fills the five input-field diagnostics from the dense fields alone: `RNFvflx`/`RNFmflx` are `RNF_vflx`/`RNF_mflx` themselves; `RNFtemp` is `(mT)/m_T` where `m_T > 0`, else **0** (this package's own stated convention for "undefined": no runoff at all, or every source feeding the cell missing its temperature); `RNFsaln` is `(mS)/m` where `m > 0`, else 0; `RNFnsrc` counts the target entries owning the cell (schema rule T03 makes that the number of distinct sources) | done |
+| `rnf_forcing_surf.F` | `RNF_FORCING_SURF` and `RNF_FORCING_SURF_PTR`: the salt and tracer terms in `surfaceForcingS` and `surfaceForcingPTr` (legacy route) | done |
+| `rnf_add_mass.F` | `RNF_ADD_MASS`: the generalized route's volume, `rhoConstFresh·flux·frac` into `addMass` at each target entry's level, the per-cell-and-level `RNF_cellVolMax` bound, and the `RNFaddM` diagnostic; called from `LOAD_FIELDS_DRIVER` after `RNF_FIELDS_LOAD` | done (RUNOFF-046) |
+| `rnf_tendency_apply.F` | `RNF_TENDENCY_APPLY_T`, `_S`, `_PTR`: the generalized route's heat, salt and tracer tendencies at each entry's level, relative to the ambient value, with the model's generic `addMass` term on the runoff share cancelled, and the `RNFgT`, `RNFgS`, `RNFtrNN` diagnostics; restored from RUNOFF-013's surface-only routines and generalized | done (RUNOFF-046) |
+| `rnf_diagnostics_init.F` | registers the four three-dimensional diagnostics of the generalized route (`RNFaddM`, `RNFgT`, `RNFgS`, `RNFtrNN`, RUNOFF-046) and all eight of decision 8 of the legacy design: the five input-field ones (`RNFvflx`, `RNFmflx`, `RNFtemp`, `RNFsaln`, `RNFnsrc`, filled by `rnf_diagnostics_fill.F`, below) and the three surface-flux ones, `RNFqnet` (W/m², the runoff heat added to `Qnet`, > 0 decreases θ), `RNFsflx` (g/m²/s, the salt added to `surfaceForcingS`, > 0 increases salinity) and `RNFtfNN` (tracer·kg/m²/s, per runoff tracer), each the runoff's own contribution to the field it feeds, as the package hands it over: `RNFqnet` is the term added to exf `Qnet` before any sea-ice open-water scaling, so under `pkg/seaice` only `(1 − A)` of it reaches ocean and ice | done |
+| `rnf_diagnostics_fill.F` | `RNF_DIAGNOSTICS_FILL`, called unconditionally at the end of `RNF_FIELDS_LOAD` (as `EXF_GETFORCING` calls `EXF_DIAGNOSTICS_FILL`), fills the five input-field diagnostics from the dense fields alone: `RNFvflx`/`RNFmflx` are `RNF_vflx`/`RNF_mflx` themselves; `RNFtemp` is `(mT)/m_T` where `m_T > 0`, else **0** (this package's own stated convention for "undefined": no runoff at all, or every source feeding the cell missing its temperature); `RNFsaln` is `(mS)/m` where `m > 0`, else 0; `RNFnsrc` counts the target entries owning the cell (schema rule T03 makes that the number of distinct sources in a 1.0 file; a schema-1.1 source spread over several levels of the cell counts once per level, since T03 keys on the level as well) | done |
 | `rnf_monitor.F` | `RNF_MONITOR`, called unconditionally alongside `RNF_DIAGNOSTICS_FILL`, in the style of `pkg/exf/exf_monitor.F`: `MON_WRITESTATS_RL` of `RNF_vflx`; the global sums `Σ RNF_vflx·rA` (m³/s), `Σ Cp·RNF_mXT·rA` (W), `Σ RNF_mXS·rA` (g/s) and one per runoff tracer in use, each a `GLOBAL_SUM_TILE_RL` over a per-tile sum, so a 1- and a 2-process run print the same line; and the number of sources and target entries in use (`RNF_nSrcFile`, `RNF_nTgtOwned`, both already process-independent) | done |
 
 The adjoint (TAF) list files are not there yet.
@@ -136,6 +138,7 @@ namelist `RNF_PARM01`:
 | `RNF_usePtracers` | `.TRUE.` | apply `runoff_ptracer_*` if the file has them; false treats them as absent, and their names are then not matched to the ptracers |
 | `RNF_monFreq` | `monitorFreq` | monitor interval (s) |
 | `RNF_debugLev` | `debugLevel` | message level |
+| `RNF_applyAsRain` | `.FALSE.` | false: the generalized route (volume in `addMass`, heat, salt and tracers as tendencies, each at the target's own level); true: the legacy surface route (exf `runoff`, `runoftemp`/`Qnet`, `surfaceForcingS`/`surfaceForcingPTr`), refused when any target is not its column's surface cell |
 
 An unset timing override means the value in the file is used; what the two
 together resolved to is reported by `RNF_SUMMARY` as `RNF_recPeriod`,
@@ -350,6 +353,9 @@ every entry was accepted, and the log says so.
   the 192 x 32 exch2 I/O layout, 12 tiles). It must reproduce
   `results/output.icedyn.txt`.
 
+Both cases set `RNF_applyAsRain = .TRUE.`: they are surface-only files run on
+the legacy route, which is what reproduces the dense references.
+
 Both files are written by
 `verification/lab_sea/input.rnof_const/gen_sparse.py`. The development
 repository holds the refusal and placement checks, the cell-by-cell
@@ -363,6 +369,13 @@ and the monitor (`tests/rnf/diagnostics_check.py`): each diagnostic against a
 reconstruction built from the file and the run's own grid, the monitor's
 global sums against the file's own source sums with the printed text
 required to match between 1 and 2 processes, and two must-fail mutants.
+The generalized route has its own oracle there (`tests/rnf/level_check.py`,
+on a lab_sea build with `ALLOW_ADDFLUID`): the analytic per-level placement
+of `RNFaddM` and of the heat, salt and tracer terms, their totals and budget
+closure for a source at one interior level and spread over four, the level
+independence of the first-step free surface, the per-level volume bound, and
+must-fail mutants with a misplaced level and with the generic `addMass` term
+not cancelled.
 
 ## Design
 

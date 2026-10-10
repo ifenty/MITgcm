@@ -47,10 +47,12 @@ C     RNF_FORCING_SURF read the sums directly), so this convention
 C     reaches no model field.
 C
 C     RNFnsrc counts the target entries that own cell (i,j): schema
-C     rule T03 forbids a duplicate (source, cell) pair in the file
-C     (docs/runoff_schema.md), so that count is also the number of
-C     distinct sources feeding the cell, with no separate bookkeeping
-C     of which source ids have been seen.
+C     rule T03 forbids a duplicate (source, cell) pair in a schema-1.0
+C     file (docs/runoff_schema.md), so there that count is also the
+C     number of distinct sources feeding the cell, with no separate
+C     bookkeeping of which source ids have been seen. T03 keys on
+C     (source, cell, level), so a schema-1.1 source spread over several
+C     levels of the cell counts once per level (RUNOFF-046).
 
 C !USES: ===============================================================
       IMPLICIT NONE

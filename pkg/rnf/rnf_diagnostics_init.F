@@ -22,7 +22,8 @@ C                   EXFroff before controls
 C       RNFmflx  :: mass flux m, kg/m^2/s
 C       RNFtemp  :: (mT)/m_T where m_T > 0, degC
 C       RNFsaln  :: (mS)/m where m > 0, g/kg
-C       RNFnsrc  :: number of sources feeding the cell, 1
+C       RNFnsrc  :: number of target entries feeding the cell, 1
+C                   (the number of sources in a schema-1.0 file)
 C
 C     depend only on the input, and RNF_DIAGNOSTICS_FILL fills them
 C     once per step from RNF_FIELDS_BUILD. The runoff's own
@@ -139,7 +140,7 @@ C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
      I     diagName, diagCode, diagUnits, diagTitle, 0, myThid )
 
       diagName  = 'RNFnsrc '
-      diagTitle = 'pkg/rnf number of sources feeding the cell'
+      diagTitle = 'pkg/rnf number of target entries feeding the cell'
       diagUnits = '1               '
       diagCode  = 'SM      U1      '
       CALL DIAGNOSTICS_ADDTOLIST( diagNum,
