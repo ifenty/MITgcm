@@ -9,6 +9,12 @@
 # ../../lab_sea/input.rnof_const/gen_sparse.py cs32const
 # and says mitgcm_time_sampling = "constant", so no timing parameter
 # is set here.
+#
+# RNF_applyAsRain = .TRUE. selects the legacy surface route (exf runoff,
+# runoftemp/Qnet, surfaceForcingS/PTr), which this case was built for and
+# whose reference output it reproduces; the default is the generalized
+# addMass route (RUNOFF-046).
  &RNF_PARM01
   RNF_file = 'runoff_sparse_const.nc',
+  RNF_applyAsRain = .TRUE.,
  &

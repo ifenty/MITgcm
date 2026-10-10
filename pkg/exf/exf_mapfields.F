@@ -202,10 +202,11 @@ C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
 #endif /* ALLOW_ATM_TEMP */
 #if defined(ALLOW_RUNOFF) && defined(ALLOW_RUNOFTEMP)
 C     pkg/rnf (sparse runoff) sets runoftemp itself when its file has
-C     a runoff temperature (RNF_applyT), see S/R RNF_EXF_RUNOFF
+C     a runoff temperature (RNF_applyT) on its legacy surface route
+C     (RNF_applyAsRain), see S/R RNF_EXF_RUNOFF
           IF ( runoftempfile .NE. ' '
 #ifdef ALLOW_RNF
-     &         .OR. RNF_applyT
+     &         .OR. ( RNF_applyT .AND. RNF_applyAsRain )
 #endif
      &       ) THEN
 C--   Add energy content of RunOff

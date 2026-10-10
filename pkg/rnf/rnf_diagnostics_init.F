@@ -46,9 +46,25 @@ C     depend on the model state as well (the reference value), so each
 C     is filled where its own term is computed, from the values that
 C     term used, once per step. All eight are two-dimensional: the
 C     surface fields are, and the model applies them at the surface
-C     level of the column. RNFqnet, RNFsflx and RNFtfNN replace the
-C     three-dimensional tendency diagnostics RNFgT, RNFgS and RNFtrNN
-C     of RUNOFF-013, which ended with the tendency terms themselves.
+C     level of the column. RNFqnet, RNFsflx and RNFtfNN are the
+C     legacy route's (RNF_applyAsRain = T) and are filled only there.
+C
+C     The generalized route (RNF_applyAsRain = F, RUNOFF-046) has
+C     three-dimensional ones instead, since its targets can be at any
+C     level:
+C
+C       RNFaddM  :: the runoff share of addMass (RNF_ADD_MASS), kg/s,
+C                   > 0 adds water
+C       RNFgT    :: the runoff temperature tendency, degC/s
+C       RNFgS    :: the runoff salinity tendency, g/kg/s
+C       RNFtrNN  :: the tendency of runoff tracer NN, tracer units/s
+C
+C     each the PHYSICAL term [(mX) - m_X*X(k)]*mass2rUnit*D of
+C     RNF_TENDENCY_APPLY_T/S/PTR, i.e. what the runoff does to the
+C     property in total, including the share the model's own generic
+C     addMass term already provides. RNFgT, RNFgS and RNFtrNN are the
+C     names RUNOFF-013 gave the tendency diagnostics of the original,
+C     surface-only, form of those routines, which RUNOFF-031 removed.
 C
 C     RNFtemp and RNFsaln report 0 at a cell this package's own
 C     convention calls undefined: no runoff at all (RNFtemp and
@@ -154,6 +170,41 @@ C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
      &    iTr, ', named by RNF_SUMMARY, >0 increases it'
         diagUnits = 'kg/m^2/s.trc    '
         diagCode  = 'SM      U1      '
+        CALL DIAGNOSTICS_ADDTOLIST( diagNum,
+     I       diagName, diagCode, diagUnits, diagTitle, 0, myThid )
+      ENDDO
+
+C--   The generalized route (RNF_applyAsRain = F)
+      diagName  = 'RNFaddM '
+      diagTitle = 'pkg/rnf runoff share of addMass, >0 adds water'
+      diagUnits = 'kg/s            '
+      diagCode  = 'SMR     MR      '
+      CALL DIAGNOSTICS_ADDTOLIST( diagNum,
+     I     diagName, diagCode, diagUnits, diagTitle, 0, myThid )
+
+      diagName  = 'RNFgT   '
+      diagTitle = 'pkg/rnf runoff temperature tendency (generalized'
+     &          //' route)'
+      diagUnits = 'degC/s          '
+      diagCode  = 'SMR     MR      '
+      CALL DIAGNOSTICS_ADDTOLIST( diagNum,
+     I     diagName, diagCode, diagUnits, diagTitle, 0, myThid )
+
+      diagName  = 'RNFgS   '
+      diagTitle = 'pkg/rnf runoff salinity tendency (generalized'
+     &          //' route)'
+      diagUnits = 'g/kg/s          '
+      diagCode  = 'SMR     MR      '
+      CALL DIAGNOSTICS_ADDTOLIST( diagNum,
+     I     diagName, diagCode, diagUnits, diagTitle, 0, myThid )
+
+      DO iTr = 1, RNF_nTr
+        WRITE(diagName,'(A,I2.2,A)') 'RNFtr', iTr, ' '
+        WRITE(diagTitle,'(A,I3,A)')
+     &    'pkg/rnf tendency of runoff tracer',
+     &    iTr, ', named by RNF_SUMMARY (generalized route)'
+        diagUnits = 'tracer units/s  '
+        diagCode  = 'SMR     MR      '
         CALL DIAGNOSTICS_ADDTOLIST( diagNum,
      I       diagName, diagCode, diagUnits, diagTitle, 0, myThid )
       ENDDO

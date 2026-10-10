@@ -39,6 +39,10 @@ C     == global variables ==
 #include "EXF_INTERP_SIZE.h"
 #include "EXF_INTERP_PARAM.h"
 #include "EXF_FIELDS.h"
+#ifdef ALLOW_RNF
+# include "RNF_SIZE.h"
+# include "RNF.h"
+#endif
 
 #ifdef ALLOW_CTRL
 # include "CTRL_SIZE.h"
@@ -451,8 +455,10 @@ C-    Runoff temperature
 
 #ifdef ALLOW_RNF
 C-    Sparse runoff (pkg/rnf) sets the runoff field, after the reads
-C     above and before the control variables below are added
-      IF ( useRNF ) THEN
+C     above and before the control variables below are added. Only on
+C     its legacy surface route (RNF_applyAsRain): the generalized
+C     route puts the volume in addMass instead (RNF_ADD_MASS)
+      IF ( useRNF .AND. RNF_applyAsRain ) THEN
        CALL RNF_EXF_RUNOFF( myTime, myIter, myThid )
       ENDIF
 #endif /* ALLOW_RNF */

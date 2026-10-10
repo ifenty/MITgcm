@@ -35,6 +35,10 @@ C     === Global variables ===
 #ifdef ALLOW_AUTODIFF_TAMC
 # include "tamc.h"
 #endif
+#ifdef ALLOW_RNF
+# include "RNF_SIZE.h"
+# include "RNF.h"
+#endif
 
 C     !INPUT/OUTPUT PARAMETERS:
 C     === Routine arguments ===
@@ -400,8 +404,11 @@ c         ENDDO
 #endif /* ALLOW_SHELFICE */
 
 #ifdef ALLOW_RNF
-C--   Sparse runoff: salt and passive-tracer content of the runoff
-        IF ( useRNF ) THEN
+C--   Sparse runoff: salt and passive-tracer content of the runoff,
+C     on the legacy surface route only (RNF_applyAsRain); the
+C     generalized route applies them as interior tendencies
+C     (RNF_TENDENCY_APPLY_S/PTR)
+        IF ( useRNF .AND. RNF_applyAsRain ) THEN
           CALL RNF_FORCING_SURF(
      I                  bi, bj, iMin, iMax, jMin, jMax,
      I                  myTime, myIter, myThid )

@@ -28,6 +28,10 @@ c #include "DYNVARS.h"
 # include "PTRACERS_PARAMS.h"
 # include "PTRACERS_FIELDS.h"
 #endif
+#ifdef ALLOW_RNF
+# include "RNF_SIZE.h"
+# include "RNF.h"
+#endif
 
 C !INPUT PARAMETERS: ===================================================
 C  bi,bj                :: tile indices
@@ -153,8 +157,9 @@ C-    end local-surface-tracer / uniform-value distinction
 
 #ifdef ALLOW_RNF
 C--   Sparse runoff: passive-tracer content of the runoff, which
-C     S/R EXTERNAL_FORCING_SURF added to the field reset above
-      IF ( useRNF ) THEN
+C     S/R EXTERNAL_FORCING_SURF added to the field reset above; legacy
+C     surface route only (RNF_applyAsRain)
+      IF ( useRNF .AND. RNF_applyAsRain ) THEN
         CALL RNF_FORCING_SURF_PTR( .FALSE.,
      I        bi, bj, iMin, iMax, jMin, jMax,
      I        myTime, myIter, myThid )

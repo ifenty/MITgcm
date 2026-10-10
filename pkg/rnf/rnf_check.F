@@ -18,9 +18,12 @@ C     static read in RNF_INIT_FIXED, which is called before this
 C     routine.
 C
 C     Refused here, with useRNF true:
-C     o pkg/exf not in use, or ALLOW_RUNOFF undefined: the package
-C       fills the exf field "runoff", which exists only with that
-C       option (EXF_FIELDS.h).
+C     o pkg/exf not in use, or ALLOW_RUNOFF undefined: the legacy
+C       route fills the exf field "runoff", which exists only with
+C       that option (EXF_FIELDS.h). The generalized route keeps the
+C       requirement: the record selection of both routes is pkg/exf's
+C       own code (RNF_GETREC), and the dense-file exclusions below
+C       read EXF_PARAM.h.
 C     o runofffile not blank: a dense runoff file and the sparse
 C       RNF_file are mutually exclusive.
 C     o runoftempfile not blank: EXF_MAPFIELDS would apply the dense
@@ -37,16 +40,32 @@ C       loses its volume, because SHELFICE_FORCING_SURF sets EmPmR to
 C       zero under the shelf. SHI_update_kTopC is tested only when
 C       useShelfIce is true: SHELFICE_READPARMS returns before it
 C       sets the default otherwise.
-C     o USE_OLD_EXTERNAL_FORCING defined: the package has no hooks in
-C       EXTERNAL_FORCING_T/S.
+C     o on the generalized route (RNF_applyAsRain = F, the default,
+C       RUNOFF-046): a build without ALLOW_ADDFLUID, selectAddFluid
+C       other than 1 or 2, or a non-blank addMassFile (see the test
+C       below for why each one breaks the addMass contribution of
+C       RNF_ADD_MASS). The model's own temp_addMass and salt_addMass
+C       are NOT refused: they are one value for the whole addMass
+C       array and so cannot carry per-source properties, and
+C       RNF_TENDENCY_APPLY_T/S cancel the model's term on the runoff
+C       share of the array instead (package design, decision 3).
+C       salt_addMass is 0, not unset, in a default run
+C       (model/src/ini_parms.F:1580 copies salt_EvPrRn, whose default
+C       is 0), so refusing it would refuse every default set-up;
+C     o USE_OLD_EXTERNAL_FORCING defined with RNF_applyAsRain: the
+C       legacy route has no hooks in EXTERNAL_FORCING_T/S (the
+C       generalized route has, beside ICEFRONT's).
 C     o a file with runoff_temperature in a build without
-C       ALLOW_RUNOFTEMP: the heat of the runoff goes through the exf
+C       ALLOW_RUNOFTEMP, on the legacy route (the generalized route
+C       applies the heat as a tendency): the heat of the runoff goes
+C       through the exf
 C       field runoftemp and the EXF_MAPFIELDS term that uses it
 C       (package design, decision 3), which exist only with that
 C       option, as for a dense runoftempfile (EXF_CHECK). Without it
 C       the temperature would be read and silently not applied.
 C       RNF_useTemp = .FALSE. reads such a file on purpose.
-C     o a file with runoff_temperature (RNF_applyT) together with
+C     o on the legacy route, a file with runoff_temperature
+C       (RNF_applyT) together with
 C       temp_EvPrRn set, in a build without ALLOW_ATM_TEMP (RUNOFF-045,
 C       owner decision 2026-10-09, option b). The model gives runoff
 C       water the temperature temp_EvPrRn whenever it is set
@@ -206,10 +225,47 @@ C--   An ice-shelf edge that moves during the run
       ENDIF
 #endif /* ALLOW_SHELFICE */
 
+C--   The generalized route (RNF_applyAsRain = F, the default) puts
+C     the volume in the model's addMass array (RNF_ADD_MASS), which
+C     exists only with ALLOW_ADDFLUID, is used by the free surface
+C     only with selectAddFluid = 1 or 2 (CALC_DIV_GHAT,
+C     INTEGR_CONTINUITY; -1 is a virtual flux with no volume), and is
+C     reset to zero at every step only when addMassFile is blank
+C     (model/src/load_fields_driver.F:116). With a file the package
+C     would add its runoff to the file's field again at every step.
+      IF ( .NOT.RNF_applyAsRain ) THEN
+#ifndef ALLOW_ADDFLUID
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: RNF_applyAsRain=.FALSE.',
+     &    ' (the generalized runoff route) needs'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: "#define ALLOW_ADDFLUID" in',
+     &    ' CPP_OPTIONS.h, or RNF_applyAsRain=.TRUE. in data.rnf'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        errCount = errCount + 1
+#endif /* ndef ALLOW_ADDFLUID */
+        IF ( selectAddFluid.NE.1 .AND. selectAddFluid.NE.2 ) THEN
+          WRITE(msgBuf,'(2A,I4,A)') 'RNF_CHECK: RNF_applyAsRain=',
+     &      '.FALSE. needs selectAddFluid = 1 or 2 (it is',
+     &      selectAddFluid, ')'
+          CALL PRINT_ERROR( msgBuf, myThid )
+          errCount = errCount + 1
+        ENDIF
+        IF ( addMassFile .NE. ' ' ) THEN
+          WRITE(msgBuf,'(2A)') 'RNF_CHECK: RNF_applyAsRain=.FALSE.',
+     &      ' needs addMassFile blank (addMass is then not reset at'
+          CALL PRINT_ERROR( msgBuf, myThid )
+          WRITE(msgBuf,'(2A)') 'RNF_CHECK: every step, and the',
+     &      ' runoff would accumulate in it)'
+          CALL PRINT_ERROR( msgBuf, myThid )
+          errCount = errCount + 1
+        ENDIF
+      ENDIF
+
 #if defined(ALLOW_EXF) && defined(ALLOW_RUNOFF)
 # ifndef ALLOW_RUNOFTEMP
-C--   The runoff heat needs the exf runoftemp field
-      IF ( RNF_hasTemp ) THEN
+C--   The runoff heat needs the exf runoftemp field on the legacy
+C     route; the generalized route applies it as a tendency
+      IF ( RNF_hasTemp .AND. RNF_applyAsRain ) THEN
         WRITE(msgBuf,'(2A)') 'RNF_CHECK: the file has',
      &    ' runoff_temperature, which needs "#define ALLOW_RUNOFTEMP"'
         CALL PRINT_ERROR( msgBuf, myThid )
@@ -231,7 +287,10 @@ C     own temp_EvPrRn term (RUNOFF-045): a pre-existing defect of the
 C     dense runoftempfile path, reported upstream and not fixed here.
 C     temp_EvPrRn and UNSET_RL are the model's own (PARAMS.h,
 C     EEPARAMS.h), already included above with no extra header.
-      IF ( RNF_applyT .AND. temp_EvPrRn.NE.UNSET_RL ) THEN
+C     Legacy route only: the generalized route does not use exf's
+C     runoff heat, so neither the defect nor its refusal applies.
+      IF ( RNF_applyT .AND. RNF_applyAsRain
+     &     .AND. temp_EvPrRn.NE.UNSET_RL ) THEN
         WRITE(msgBuf,'(2A)') 'RNF_CHECK: the file has',
      &    ' runoff_temperature and temp_EvPrRn is set, which needs'
         CALL PRINT_ERROR( msgBuf, myThid )
@@ -276,14 +335,19 @@ C     it otherwise), hence the nested test.
 #endif /* ALLOW_LONGSTEP */
 
 #ifdef USE_OLD_EXTERNAL_FORCING
-C--   No pkg/rnf hooks in the old forcing routines
-      WRITE(msgBuf,'(2A)') 'RNF_CHECK: useRNF=.TRUE. needs',
+C--   No legacy-route hooks in the old forcing routines. The
+C     generalized route has its RNF_TENDENCY_APPLY_T/S calls there
+C     (model/src/external_forcing.F, beside ICEFRONT's), so it is not
+C     refused; no experiment compiles that path, so they are unrun.
+      IF ( RNF_applyAsRain ) THEN
+       WRITE(msgBuf,'(2A)') 'RNF_CHECK: RNF_applyAsRain=.TRUE. needs',
      &  ' "#undef USE_OLD_EXTERNAL_FORCING" (no pkg/rnf hooks'
-      CALL PRINT_ERROR( msgBuf, myThid )
-      WRITE(msgBuf,'(2A)') 'RNF_CHECK: in S/R EXTERNAL_FORCING_T',
-     &  ' and EXTERNAL_FORCING_S)'
-      CALL PRINT_ERROR( msgBuf, myThid )
-      errCount = errCount + 1
+       CALL PRINT_ERROR( msgBuf, myThid )
+       WRITE(msgBuf,'(2A)') 'RNF_CHECK: in S/R EXTERNAL_FORCING_T',
+     &  ' and EXTERNAL_FORCING_S for the legacy route)'
+       CALL PRINT_ERROR( msgBuf, myThid )
+       errCount = errCount + 1
+      ENDIF
 #endif /* USE_OLD_EXTERNAL_FORCING */
 
       IF ( errCount.GE.1 ) THEN

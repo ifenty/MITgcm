@@ -15,7 +15,13 @@
 # this run directory (tests/runoff/lab_sea_runoff_timing_check.py); here
 # it has to report record 1 with weight 1 at every step. It only prints
 # and changes no value.
+#
+# RNF_applyAsRain = .TRUE. selects the legacy surface route (exf runoff,
+# runoftemp/Qnet, surfaceForcingS/PTr), which this case was built for and
+# whose reference output it reproduces; the default is the generalized
+# addMass route (RUNOFF-046).
  &RNF_PARM01
   RNF_file = '../input.rnof_const/runoff_sparse.nc',
   RNF_debugLev = 3,
+  RNF_applyAsRain = .TRUE.,
  &

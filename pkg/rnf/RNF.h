@@ -50,6 +50,30 @@ C     RNF_useSalt        :: apply runoff_salinity if the file has it
 C     RNF_usePtracers    :: apply runoff_ptracer_* if the file has them
 C     RNF_monFreq        :: monitor interval (s), default monitorFreq
 C     RNF_debugLev       :: message level, default debugLevel
+C     RNF_applyAsRain    :: which of the two routes applies the runoff
+C                           (package design, decision 2; RUNOFF-046):
+C                           F (default): the GENERALIZED route. The
+C                           volume is a mass source in the model's
+C                           addMass array at the level of each target
+C                           entry (RNF_ADD_MASS), and the heat, salt
+C                           and tracers are tendency terms at that
+C                           same level (RNF_TENDENCY_APPLY_T/S/PTR).
+C                           Needs ALLOW_ADDFLUID and selectAddFluid =
+C                           1 or 2 (RNF_CHECK). Nothing reaches the
+C                           exf runoff field, so pkg/seaice,
+C                           pkg/thsice and pkg/bling do not see this
+C                           runoff.
+C                           T: the LEGACY surface route of RUNOFF-031:
+C                           the volume in the exf runoff field
+C                           (RNF_EXF_RUNOFF), the heat through exf
+C                           runoftemp and Qnet, the salt and tracers
+C                           in the surface forcing fields
+C                           (RNF_FORCING_SURF, RNF_FORCING_SURF_PTR).
+C                           Refused at init when any target of the
+C                           file is not the surface cell of its column
+C                           (RNF_INIT_FIXED).
+C                           Exactly one route contributes in a run:
+C                           each hook tests this flag.
 C
 C--   Internal parameters (not in the namelist)
 C     RNFisON            :: package activation status
@@ -573,6 +597,9 @@ C     RNF_nSrcProc       :: tile-source entries of this process
 C                           (a source on two tiles counts twice)
 C     RNF_nTgtProc       :: target entries owned by this process
 C     RNF_nTgtOwned      :: target entries owned over all processes
+C     RNF_nTgtDeep       :: of those, the entries whose level is not
+C                           the surface level of their column (summed
+C                           over all processes)
 C
 C--   Per-tile lists built by RNF_INIT_FIXED. Index k runs over the
 C     entries of tile (bi,bj); only what the tile owns is stored.
@@ -581,8 +608,17 @@ C     RNF_nTgt           :: number of target entries on the tile
 C     RNF_srcGlob        :: 0-based source index in the file of local
 C                           source k
 C     RNF_tgtI, RNF_tgtJ :: local cell indices of target entry k
-C     RNF_tgtK           :: model level of target entry k (the
-C                           surface level of its column)
+C     RNF_tgtK           :: model level of target entry k. The surface
+C                           level of its column (1 in z coordinates,
+C                           Nr in pressure coordinates, kSurfC under
+C                           pkg/shelfice) for a schema-1.0 file and
+C                           for a file without target_level; the
+C                           file's target_level itself, an absolute
+C                           MITgcm level index, for a schema-1.1 file
+C                           (RNF_INIT_FIXED, RUNOFF-046). Entries of
+C                           one cell (i,j) may carry different levels:
+C                           a source spread over a depth range is a
+C                           source with one entry per level
 C     RNF_tgtSrc         :: local source index of target entry k
 C     RNF_tgtFrac        :: fraction of that source sent to the cell
 C     RNF_srcFracSum     :: fractions of local source k summed over
@@ -619,6 +655,14 @@ C
 C     The heat of the runoff is applied from RNF_vflx, RNF_mflx,
 C     RNF_mflxT and RNF_mXT of the current step: RNF_EXF_RUNOFF turns
 C     them into the exf runoftemp field (package design, decision 3).
+C     These fields are two-dimensional because the legacy route
+C     (RNF_applyAsRain = T) puts every entry at the surface level of
+C     its column. The generalized route does not use them to apply
+C     anything: RNF_ADD_MASS and RNF_TENDENCY_APPLY_T/S/PTR work on
+C     the target entries themselves, each at its own RNF_tgtK, so no
+C     three-dimensional companion of these fields exists (RUNOFF-046).
+C     They are still built on that route, as column totals, for the
+C     input-field diagnostics and the monitor.
 C
 C--   The fields the salt and tracer terms use (RNF_ap*: m, (mS) and
 C     (mC_n)), at the time level of the model's own freshwater flux.
@@ -650,10 +694,12 @@ CEOP
       LOGICAL RNF_useTemp
       LOGICAL RNF_useSalt
       LOGICAL RNF_usePtracers
+      LOGICAL RNF_applyAsRain
       COMMON /RNF_PARM_L/
      &     RNFisON,
      &     RNF_holdRecord, RNF_useYearlyFiles,
-     &     RNF_useTemp, RNF_useSalt, RNF_usePtracers
+     &     RNF_useTemp, RNF_useSalt, RNF_usePtracers,
+     &     RNF_applyAsRain
 
       INTEGER RNF_startDate1
       INTEGER RNF_startDate2
@@ -698,9 +744,13 @@ C     It is optional in both directions: target_lon/target_lat are
 C     optional in schema 1.0, and XC,YC are degrees only on a
 C     spherical-polar or curvilinear grid. RNF_SUMMARY reports it so
 C     that a run never looks guarded when it was not.
+C     RNF_levAbs    :: target_level is read as an absolute model level:
+C     the file is schema 1.1 or later and has the variable. Otherwise
+C     every entry is at the surface level of its column (RNF_tgtK)
       LOGICAL RNF_tableRead
       LOGICAL RNF_lonLatChk
-      COMMON /RNF_COUNT_L/ RNF_tableRead, RNF_lonLatChk
+      LOGICAL RNF_levAbs
+      COMMON /RNF_COUNT_L/ RNF_tableRead, RNF_lonLatChk, RNF_levAbs
 
 C--   Effective time handling (RNF_TIME_SETUP). These are the values
 C     RNF_GETREC hands to the pkg/exf record-selection routines, so
@@ -825,7 +875,10 @@ C     tracked by, rather than the model times themselves, because an
 C     iteration is exact: myTime - deltaTClock of one step need not be
 C     bitwise the myTime of the step before it.
 C     RNF_lagFlds :: the terms use the fields of the previous step,
-C                    i.e. branch N without staggerTimeStep
+C                    i.e. branch N without staggerTimeStep, on the
+C                    legacy route only: the generalized route uses
+C                    the fields of the current step, the step its
+C                    addMass belongs to (RUNOFF-046)
 C     RNF_curIter :: iteration of RNF_vflx and the other dense fields
 C                    (RNF_noIter: nothing built yet)
 C     RNF_apIter  :: iteration of the RNF_ap* fields, the ones the
@@ -847,9 +900,11 @@ C--   Counts of the static read
       INTEGER RNF_nSrcProc
       INTEGER RNF_nTgtProc
       INTEGER RNF_nTgtOwned
+      INTEGER RNF_nTgtDeep
       COMMON /RNF_COUNT_I/
      &     RNF_nSrcFile, RNF_nTgtFile, RNF_nRecFile,
-     &     RNF_nSrcProc, RNF_nTgtProc, RNF_nTgtOwned
+     &     RNF_nSrcProc, RNF_nTgtProc, RNF_nTgtOwned,
+     &     RNF_nTgtDeep
 
 C--   Per-tile source and target lists
       INTEGER RNF_nSrc   (nSx,nSy)

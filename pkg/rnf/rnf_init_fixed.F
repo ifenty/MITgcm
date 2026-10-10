@@ -18,14 +18,16 @@ C     the model start year: every file of a yearly set holds the same
 C     tables (runoff schema 1.0, section 7).
 C
 C     Steps, in the order they are made:
-C     1. the global attributes: schema major version, mitgcm_grid_nx
+C     1. the global attributes: schema major version (and the minor
+C        one, which decides what target_level means), mitgcm_grid_nx
 C        and mitgcm_grid_ny against the model's own global I/O layout;
 C     2. the dimensions time, source and target; then the time
 C        handling (RNF_TIME_SETUP, which needs the record count), and
 C        the required variables;
 C     3. the target table in chunks. Each entry is checked before it
 C        is placed: target_source and target_cell in range,
-C        target_level = 1 and target_fraction in [0,1];
+C        target_level = 1 (schema 1.0) or in 1..Nr (schema 1.1, where
+C        it is an absolute level index) and target_fraction in [0,1];
 C     4. placement with the arithmetic that pkg/mdsio uses to read a
 C        global file (mdsio_read_field.F), never from the grid
 C        geometry: row j of tile (bi,bj) is the global record
@@ -34,7 +36,10 @@ C        with tBx, tBy, iGjLoc and jGjLoc from myXGlobalLo and
 C        myYGlobalLo, or from the exch2 I/O variables including the
 C        fold and long-line cases. A target whose record is a record
 C        of the tile belongs to it;
-C     5. the checks of an owned target: on land, beyond an open
+C     5. the checks of an owned target: on land, at a level that is
+C        not wet in its column, at a level other than the surface
+C        with RNF_applyAsRain (the legacy route takes surface targets
+C        only, owner decision 2026-10-10, RUNOFF-046), beyond an open
 C        boundary (maskInC), under an ice shelf (kTopC), when the
 C        file has target_cell_area, against rA, and when it has
 C        target_lon/target_lat, against the cell's own centre
@@ -119,7 +124,8 @@ C                          file sorted by source counts it once
       INTEGER rowRec(sNy,nSx,nSy)
       INTEGER nSrcNeed(nSx,nSy), nTgtNeed(nSx,nSy)
       INTEGER lastOvf(nSx,nSy)
-      INTEGER fileNx, fileNy, majVer, iDot, ios
+      INTEGER fileNx, fileNy, majVer, minVer, iDot, ios
+      INTEGER kCol, nTgtDeep
       INTEGER iChunk, nChunk, iEnt0, nLoc, kEnt
       INTEGER iSrcF, cellF, levF, iRec, iLoc, kSrc
       INTEGER refuse
@@ -173,6 +179,9 @@ C     each process raises them.
       nErrFrac = 0
       nMsgEnt = 0
       nMsgTgt = 0
+      nTgtDeep = 0
+      majVer = -1
+      minVer = 0
       fileOpen = .FALSE.
 
       _BEGIN_MASTER(myThid)
@@ -200,6 +209,8 @@ C--   Empty lists
       RNF_nTgtOwned = 0
       RNF_tableRead = .FALSE.
       RNF_lonLatChk = .FALSE.
+      RNF_levAbs = .FALSE.
+      RNF_nTgtDeep = 0
 C--   What the file carries, until RNF_NC_SERIES says otherwise
       RNF_hasTemp = .FALSE.
       RNF_hasSalt = .FALSE.
@@ -213,7 +224,9 @@ C--   What the file carries, until RNF_NC_SERIES says otherwise
 
 C--   The surface level of a column, as S/R APPLY_FORCING_T selects
 C     it (1 in z coordinates, Nr in pressure coordinates, kSurfC with
-C     pkg/shelfice). Schema 1.0 allows only the surface.
+C     pkg/shelfice). Schema 1.0 allows only the surface, and every
+C     entry of a file without target_level is there; a schema-1.1
+C     target_level is an absolute level and need not be.
       kSurf = 1
       IF ( usingPCoords ) kSurf = Nr
 
@@ -228,9 +241,15 @@ C     follow, or the salt budget of each step would be off by
 C     (m_previous - m_current)*S_ref*mass2rUnit. The heat does not:
 C     it goes through the exf runoftemp field with the runoff of the
 C     current step, as the dense path's does.
+C     All of this is the legacy route's (RNF_applyAsRain). The
+C     generalized route has no surface freshwater flux to follow: its
+C     terms belong to the step of the addMass that RNF_ADD_MASS fills,
+C     which is the current one, as the model's own addMass terms do
+C     (model/src/apply_forcing.F:504-531).
       RNF_lagFlds = ( nonlinFreeSurf.GT.0 .OR. usingPCoords )
      &              .AND. useRealFreshWaterFlux
      &              .AND. .NOT.staggerTimeStep
+     &              .AND. RNF_applyAsRain
 
 C--   Global I/O layout, as S/R MDSIO_READ_FIELD sets it
       xSize = Nx
@@ -292,6 +311,15 @@ C--   1. Open the file and read the global attributes
      &      ') is not 1'
           CALL PRINT_ERROR( msgBuf, myThid )
           errCount = errCount + 1
+        ENDIF
+C--     The minor version decides what target_level means (runoff
+C       schema 1.1, RUNOFF-046): in 1.0 it may only be 1, the surface
+C       cell of the column; from 1.1 on it is an absolute MITgcm level
+C       index. A version without a readable minor part ("1") is 1.0.
+        minVer = 0
+        IF ( iDot .LT. attLen ) THEN
+          READ(attTxt(iDot+1:attLen),*,IOSTAT=ios) minVer
+          IF ( ios.NE.0 ) minVer = 0
         ENDIF
       ENDIF
 
@@ -394,6 +422,9 @@ C--   Nothing can be placed when the header is wrong
      &       'looking for the variable target_level',
      &       errNC, myThid )
       ENDIF
+C--   target_level is an absolute level from schema 1.1 on, and the
+C     surface (only 1 is allowed) before it
+      RNF_levAbs = hasLev .AND. majVer.EQ.1 .AND. minVer.GE.1
       hasArea = .FALSE.
       errNC = NF_INQ_VARID( fid, 'target_cell_area', idArea )
       IF ( errNC .EQ. NF_NOERR ) THEN
@@ -617,7 +648,26 @@ C         the value and the entry.
                 CALL PRINT_ERROR( msgBuf, myThid )
               ENDIF
             ENDIF
-            IF ( levF .NE. 1 ) THEN
+            IF ( RNF_levAbs ) THEN
+C-            schema 1.1: an absolute level, which has to be a level
+C             of the grid. Whether it is wet is a question for the
+C             tile that owns the cell (step 5).
+             IF ( levF.LT.1 .OR. levF.GT.Nr ) THEN
+              badEnt = .TRUE.
+              IF ( nMsgEnt .LT. RNF_maxErrMsg ) THEN
+                nMsgEnt = nMsgEnt + 1
+                CALL RNF_NC_SOURCE_ID( fid, iSrcF, 'RNF_INIT_FIXED',
+     O               srcId, idLen,
+     I               myThid )
+                WRITE(msgBuf,'(3A,I12,A,I4,A,I12)') 'RNF_INIT_FIXED:'
+     &            //' RNF: target_level out of range: source ',
+     &            srcId(1:idLen), ', target_level', levF,
+     &            ' (valid: 1 to Nr =', Nr, '), target entry (from 0)',
+     &            kEnt
+                CALL PRINT_ERROR( msgBuf, myThid )
+              ENDIF
+             ENDIF
+            ELSEIF ( levF .NE. 1 ) THEN
               badEnt = .TRUE.
               IF ( nMsgEnt .LT. RNF_maxErrMsg ) THEN
                 nMsgEnt = nMsgEnt + 1
@@ -705,21 +755,46 @@ C               file sorted by source, an upper bound otherwise.
                RNF_srcFracSum(kSrc,bi,bj) =
      &              RNF_srcFracSum(kSrc,bi,bj) + fracF
 
-C--            5. The checks of an owned target. The level is the
-C              surface level of this column. The source id is read
-C              from the file only when a message needs it.
-               RNF_tgtK(k,bi,bj) = kSurf
+C--            5. The checks of an owned target. kCol is the surface
+C              level of this column; the level of the entry is kCol
+C              too unless a schema-1.1 file gives its own
+C              (RNF_levAbs), which is then used as it is, with no
+C              translation (a pressure-coordinate file that means the
+C              surface writes Nr). The source id is read from the
+C              file only when a message needs it.
+               kCol = kSurf
 #ifdef ALLOW_SHELFICE
                IF ( usingZCoords .AND. useShelfIce )
-     &              RNF_tgtK(k,bi,bj) = kSurfC(iLoc,j,bi,bj)
+     &              kCol = kSurfC(iLoc,j,bi,bj)
 #endif /* ALLOW_SHELFICE */
+               RNF_tgtK(k,bi,bj) = kCol
+               IF ( RNF_levAbs ) RNF_tgtK(k,bi,bj) = levF
+               IF ( RNF_tgtK(k,bi,bj) .NE. kCol )
+     &              nTgtDeep = nTgtDeep + 1
                refuse = 0
                IF ( RNF_tgtK(k,bi,bj).LT.1 .OR.
-     &              RNF_tgtK(k,bi,bj).GT.Nr ) THEN
+     &              RNF_tgtK(k,bi,bj).GT.Nr .OR.
+     &              kCol.LT.1 .OR. kCol.GT.Nr ) THEN
+C-             kSurfC is Nr+1 in a dry column
+                refuse = 1
+               ELSEIF ( maskC(iLoc,j,kCol,bi,bj)
+     &                  .EQ. 0. _d 0 ) THEN
+C-             the column itself is dry: a land cell, at any level
                 refuse = 1
                ELSEIF ( maskC(iLoc,j,RNF_tgtK(k,bi,bj),bi,bj)
      &                  .EQ. 0. _d 0 ) THEN
-                refuse = 1
+C-             a wet column, but the level is below its bottom (or,
+C              under an ice shelf, above its top): the one test that
+C              "a wet cell at or below kTopC" needs, since every wet
+C              cell of a column lies between kSurfC and kLowC
+                refuse = 6
+               ELSEIF ( RNF_applyAsRain .AND.
+     &                  RNF_tgtK(k,bi,bj).NE.kCol ) THEN
+C-             the legacy route puts the runoff in the surface fields:
+C              it is refused for any target that is not the surface
+C              cell of its column, whatever the other targets are
+C              (owner decision 2026-10-10, RUNOFF-046)
+                refuse = 7
                ELSEIF ( maskInC(iLoc,j,bi,bj) .EQ. 0. _d 0 ) THEN
                 refuse = 2
 #ifdef ALLOW_SHELFICE
@@ -800,6 +875,26 @@ C              above, which has always been written this way.
                   CALL RNF_NC_TGT_ERROR( 'RNF_INIT_FIXED',
      I                 'target under an ice shelf (kTopC /= 0)',
      I                 srcId, idLen, cellF, iLoc, j, bi, bj, myThid )
+                 ELSEIF ( refuse .EQ. 6 ) THEN
+                  CALL RNF_NC_TGT_ERROR( 'RNF_INIT_FIXED',
+     I                 'target_level is not a wet level of this column',
+     I                 srcId, idLen, cellF, iLoc, j, bi, bj, myThid )
+                  WRITE(msgBuf,'(2A,I4,A,I4)')
+     &              'RNF_INIT_FIXED: RNF:', ' target_level =',
+     &              RNF_tgtK(k,bi,bj), ', surface level', kCol
+                  CALL PRINT_ERROR( msgBuf, myThid )
+                 ELSEIF ( refuse .EQ. 7 ) THEN
+                  CALL RNF_NC_TGT_ERROR( 'RNF_INIT_FIXED',
+     I                 'RNF_applyAsRain=.TRUE. needs every target at'
+     I                 //' the surface cell', srcId, idLen, cellF,
+     I                 iLoc, j, bi, bj, myThid )
+                  WRITE(msgBuf,'(2A,I4,A,I4)')
+     &              'RNF_INIT_FIXED: RNF:', ' target_level =',
+     &              RNF_tgtK(k,bi,bj), ', surface level', kCol
+                  CALL PRINT_ERROR( msgBuf, myThid )
+                  WRITE(msgBuf,'(2A)') 'RNF_INIT_FIXED: RNF: set',
+     &              ' RNF_applyAsRain=.FALSE. (the default) in data.rnf'
+                  CALL PRINT_ERROR( msgBuf, myThid )
                  ELSEIF ( refuse .EQ. 4 ) THEN
                   CALL RNF_NC_TGT_ERROR( 'RNF_INIT_FIXED',
      I                 'target_cell_area differs from the cell area'
@@ -935,9 +1030,11 @@ C     process before the stop
       CALL GLOBAL_SUM_INT( nErrTgt, myThid )
       CALL GLOBAL_SUM_INT( nErrBnd, myThid )
       CALL GLOBAL_SUM_INT( nTgtOwn, myThid )
+      CALL GLOBAL_SUM_INT( nTgtDeep, myThid )
 
       _BEGIN_MASTER(myThid)
       RNF_nTgtOwned = nTgtOwn
+      RNF_nTgtDeep = nTgtDeep
 
       IF ( nErrFrac .GE. 1 ) THEN
         WRITE(msgBuf,'(A,I8,A)') 'RNF_INIT_FIXED: RNF:', nErrFrac,

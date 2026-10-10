@@ -8,8 +8,9 @@ C !INTERFACE: ==========================================================
 
 C !DESCRIPTION:
 C     Initialize RNF parameters, read in data.rnf (namelist RNF_PARM01).
-C     Returns at once when useRNF is false, having set RNF_applyT
-C     false, the one package flag pkg/exf reads (EXF_MAPFIELDS).
+C     Returns at once when useRNF is false, having set RNF_applyT and
+C     RNF_applyAsRain false, the two package flags pkg/exf reads
+C     (EXF_MAPFIELDS).
 C     When useRNF is true, stops the run for a blank RNF_file and for
 C     a build without NetCDF. These two refusals guard the static read
 C     of RNF_file in RNF_INIT_FIXED. They cannot wait for RNF_CHECK,
@@ -48,17 +49,21 @@ CEOP
      &     RNF_startTime, RNF_period, RNF_repCycle,
      &     RNF_useYearlyFiles,
      &     RNF_useTemp, RNF_useSalt, RNF_usePtracers,
-     &     RNF_monFreq, RNF_debugLev
+     &     RNF_monFreq, RNF_debugLev,
+     &     RNF_applyAsRain
 
       IF ( .NOT.useRNF ) THEN
 C-    pkg RNF is not used
         _BEGIN_MASTER(myThid)
 C-    Track pkg activation status:
          RNFisON = .FALSE.
-C-    EXF_MAPFIELDS reads RNF_applyT whenever pkg/rnf is compiled
-C     (RUNOFF-031), and RNF_INIT_FIXED, which sets it, is not called
-C     without useRNF: give it its value here
+C-    EXF_MAPFIELDS reads RNF_applyT and RNF_applyAsRain whenever
+C     pkg/rnf is compiled (RUNOFF-031, RUNOFF-046), and RNF_INIT_FIXED,
+C     which sets the first, is not called without useRNF: give both a
+C     value here. With RNF_applyT false the EXF_MAPFIELDS condition is
+C     false whatever RNF_applyAsRain is.
          RNF_applyT = .FALSE.
+         RNF_applyAsRain = .FALSE.
 C     print a (weak) warning if data.rnf is found
          CALL PACKAGES_UNUSED_MSG( 'useRNF', ' ', ' ' )
         _END_MASTER(myThid)
@@ -88,6 +93,9 @@ C     An unset timing override means: use the value from the file
       RNF_usePtracers    = .TRUE.
       RNF_monFreq        = monitorFreq
       RNF_debugLev       = debugLevel
+C     The generalized (addMass and interior tendency) route is the
+C     default; the legacy surface route has to be asked for
+      RNF_applyAsRain    = .FALSE.
 
 C Open and read the data.rnf file
       WRITE(msgBuf,'(A)') ' RNF_READPARMS: opening data.rnf'

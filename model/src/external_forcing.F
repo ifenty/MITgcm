@@ -573,6 +573,14 @@ c     ENDIF
      I                   kLev, bi, bj, myTime, 0, myThid )
 #endif /* ALLOW_ICEFRONT */
 
+#ifdef ALLOW_RNF
+      IF ( useRNF )
+     &     CALL RNF_TENDENCY_APPLY_T(
+     U                   gT(1-OLx,1-OLy,kLev,bi,bj),
+     I                   iMin,iMax,jMin,jMax, kLev, bi,bj,
+     I                   myTime, 0, myThid )
+#endif /* ALLOW_RNF */
+
 #ifdef ALLOW_SALT_PLUME
       IF ( useSALT_PLUME )
      &     CALL SALT_PLUME_TENDENCY_APPLY_T(
@@ -776,6 +784,14 @@ C     Ocean: Add salinity surface forcing (e.g., fresh-water) in surface level
      U                   gS(1-OLx,1-OLy,kLev,bi,bj),
      I                   kLev, bi, bj, myTime, 0, myThid )
 #endif /* ALLOW_ICEFRONT */
+
+#ifdef ALLOW_RNF
+      IF ( useRNF )
+     &     CALL RNF_TENDENCY_APPLY_S(
+     U                   gS(1-OLx,1-OLy,kLev,bi,bj),
+     I                   iMin,iMax,jMin,jMax, kLev, bi,bj,
+     I                   myTime, 0, myThid )
+#endif /* ALLOW_RNF */
 
 #ifdef ALLOW_SALT_PLUME
       IF ( useSALT_PLUME )

@@ -17,7 +17,13 @@
 # the earlier one. That trace is what the sparse timing check reads from
 # this run directory (tests/runoff/lab_sea_runoff_timing_check.py); it
 # only prints and changes no value.
+#
+# RNF_applyAsRain = .TRUE. selects the legacy surface route (exf runoff,
+# runoftemp/Qnet, surfaceForcingS/PTr), which this case was built for and
+# whose reference output it reproduces; the default is the generalized
+# addMass route (RUNOFF-046).
  &RNF_PARM01
   RNF_file = '../input.rnof_month1/runoff_sparse.nc',
   RNF_debugLev = 3,
+  RNF_applyAsRain = .TRUE.,
  &

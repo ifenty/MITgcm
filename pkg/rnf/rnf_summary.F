@@ -128,6 +128,9 @@ C--   Parameters of data.rnf
       CALL WRITE_0D_I( RNF_debugLev, INDEX_NONE,
      &  'RNF_debugLev =',
      &  ' /* select RNF-debug printing level */')
+      CALL WRITE_0D_L( RNF_applyAsRain, INDEX_NONE,
+     &  'RNF_applyAsRain =',
+     &  ' /* T: legacy surface route; F: addMass+tendencies */')
 
 C--   The time handling RNF_TIME_SETUP resolved from the file's time
 C     axis and these overrides. RNF_recPeriod, RNF_recStart and
@@ -194,9 +197,18 @@ C     here; the per-cell line is RUNOFF-040.
      &  ' EXF_CHECK_RANGE still applies per cell (at nIter0)'
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )
-      WRITE(msgBuf,'(2A,1PE16.8,A)') 'RNF_SUMMARY: RNF_EXF_RUNOFF',
+      IF ( RNF_applyAsRain ) THEN
+       WRITE(msgBuf,'(2A,1PE16.8,A)') 'RNF_SUMMARY: RNF_EXF_RUNOFF',
      &  ' refuses a cell above RNF_cellVolMax =', RNF_cellVolMax,
      &  ' of its top-layer volume per step'
+      ELSE
+C-     the generalized route puts nothing in the exf runoff field, so
+C      the two exf statements above concern a field that stays zero;
+C      its per-cell bound is RNF_ADD_MASS's, at the target level
+       WRITE(msgBuf,'(2A,1PE16.8,A)') 'RNF_SUMMARY: RNF_ADD_MASS',
+     &  ' refuses a cell above RNF_cellVolMax =', RNF_cellVolMax,
+     &  ' of its own volume per step'
+      ENDIF
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )
 
@@ -258,6 +270,12 @@ C--   What the static read of RNF_file found
       CALL WRITE_0D_I( RNF_nTgtOwned, INDEX_NONE,
      &  'RNF_nTgtOwned =',
      &  ' /* target entries owned over all processes */')
+      CALL WRITE_0D_L( RNF_levAbs, INDEX_NONE,
+     &  'RNF_levAbs =',
+     &  ' /* target_level read as absolute levels (1.1) */')
+      CALL WRITE_0D_I( RNF_nTgtDeep, INDEX_NONE,
+     &  'RNF_nTgtDeep =',
+     &  ' /* owned entries not at their column surface */')
 C--   Whether the optional cell-centre check ran, so that a run is
 C     never taken to be guarded by it when the file did not carry
 C     target_lon/target_lat or the grid's XC,YC are not degrees.
