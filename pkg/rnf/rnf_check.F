@@ -46,6 +46,25 @@ C       (package design, decision 3), which exist only with that
 C       option, as for a dense runoftempfile (EXF_CHECK). Without it
 C       the temperature would be read and silently not applied.
 C       RNF_useTemp = .FALSE. reads such a file on purpose.
+C     o a file with runoff_temperature (RNF_applyT) together with
+C       temp_EvPrRn set, in a build without ALLOW_ATM_TEMP (RUNOFF-045,
+C       owner decision 2026-10-09, option b). The model gives runoff
+C       water the temperature temp_EvPrRn whenever it is set
+C       (model/src/external_forcing_surf.F:299-305), exf cancels that
+C       assumption for runoff only inside "#ifdef ALLOW_ATM_TEMP"
+C       (pkg/exf/exf_mapfields.F:136-197), and the exf runoff-heat
+C       block that follows adds the runoff heat term either way
+C       (exf_mapfields.F:199-210). Without this refusal the runoff
+C       would silently enter at temp_EvPrRn + T_r - theta (branches N
+C       and L) or T_r - theta + temp_EvPrRn - tRef (branch U) instead
+C       of at the source temperature T_r. This is a pre-existing
+C       defect of the dense runoftempfile path, which the sparse path
+C       inherited when RUNOFF-031 moved its heat onto the same exf
+C       code; it is reported upstream and not fixed here (that is
+C       option c, declined). temp_EvPrRn = UNSET_RL (the default), or
+C       RNF_useTemp = .FALSE., avoids it. RNF_applyT is set by
+C       RNF_INIT_FIXED, which has already run when this routine is
+C       called (see above).
 C     o pkg/longstep stepping the ptracers with LS_nIter other than 1
 C       while the file feeds at least one of them (RUNOFF-043, owner
 C       decision 2026-10-09, option C): the tracer term is that of the
@@ -203,6 +222,33 @@ C--   The runoff heat needs the exf runoftemp field
         errCount = errCount + 1
       ENDIF
 # endif /* ndef ALLOW_RUNOFTEMP */
+#endif /* ALLOW_EXF and ALLOW_RUNOFF */
+
+#if defined(ALLOW_EXF) && defined(ALLOW_RUNOFF)
+# ifndef ALLOW_ATM_TEMP
+C--   The runoff heat without exf's ALLOW_ATM_TEMP cancellation of its
+C     own temp_EvPrRn term (RUNOFF-045): a pre-existing defect of the
+C     dense runoftempfile path, reported upstream and not fixed here.
+C     temp_EvPrRn and UNSET_RL are the model's own (PARAMS.h,
+C     EEPARAMS.h), already included above with no extra header.
+      IF ( RNF_applyT .AND. temp_EvPrRn.NE.UNSET_RL ) THEN
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: the file has',
+     &    ' runoff_temperature and temp_EvPrRn is set, which needs'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: "#define ALLOW_ATM_TEMP" in',
+     &    ' EXF_OPTIONS.h (without it exf does not cancel its own'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: temp_EvPrRn term for runoff,',
+     &    ' which then enters at the wrong temperature; RUNOFF-045),'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(2A)') 'RNF_CHECK: or temp_EvPrRn = UNSET_RL',
+     &    ' (the default) in data, or RNF_useTemp=.FALSE. in data.rnf'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        WRITE(msgBuf,'(A)') 'RNF_CHECK: to read the file without it'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        errCount = errCount + 1
+      ENDIF
+# endif /* ndef ALLOW_ATM_TEMP */
 #endif /* ALLOW_EXF and ALLOW_RUNOFF */
 
 #ifdef ALLOW_LONGSTEP
