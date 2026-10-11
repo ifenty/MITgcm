@@ -43,18 +43,20 @@ Inputs
   other ``source_*`` metadata and the alias table); its sources take every
   option from the defaults. Or a list of dicts with the CSV column names.
 * **Grid:** MITgcm grid output read with :func:`MITgcmutils.mds.rdmds`
-  (global or tiled files): ``hFacC`` (level 1 is the wet mask), ``XC``,
-  ``YC``, ``XG``, ``YG`` (degrees) and ``RAC`` (m2), or a dict of these
-  arrays. Every field is a global 2D ``(ny, nx)`` array and cell
-  ``c = i + nx*j`` is its C-order ravel index, as in the checker.
+  (global or tiled files): ``hFacC`` (the model's surface wet mask, chosen by
+  ``surface_level``, module notes), ``XC``, ``YC``, ``XG``, ``YG`` (degrees)
+  and ``RAC`` (m2), or a dict of these arrays. Every field is a global 2D
+  ``(ny, nx)`` array and cell ``c = i + nx*j`` is its C-order ravel index, as
+  in the checker.
 * **Distances** are meters; strings such as ``"25km"`` or ``"25000 m"`` are
   accepted everywhere.
 
 Algorithm (``docs/runoff_schema.md`` section 13)
 -------------------------------------------------
 1. **Snap:** each source goes to the nearest wet surface cell (``hFacC`` > 0
-   at level 1, ``RAC`` > 0) by great-circle distance from its point to the
-   cell center (haversine, radius ``earth_radius``). A nearest cell farther
+   at the model's own surface level, ``RAC`` > 0) by great-circle distance
+   from its point to the cell center (haversine, radius ``earth_radius``). A
+   nearest cell farther
    than ``max_snap_distance`` is an error naming the source, the distance and
    that cell. Exact ties go to the lowest cell index.
 2. **Pointwise:** one target, fraction 1, at the snapped cell.
@@ -223,6 +225,16 @@ Implementation notes
   it gives the array neighbours. The ``exch2`` method assumes cells that are
   close to parallelograms around their centers; no LLC grid was available
   to test it.
+* **Surface level** (``surface_level``, module notes; RUNOFF-032): the
+  ``hFacC`` level :func:`_Geom` and :func:`read_grid` treat as the wet mask is
+  the model's own surface cell (``docs/package_design.md`` decision 5,
+  :func:`MITgcmutils.runoff.check._surface_hfac`), not unconditionally level
+  1: ``"top"`` (default) is each column's first wet level scanning from
+  level 1 (the z-coordinate convention, correct with or without shelfice --
+  bit-for-bit the level-1 hardcode this replaces on a grid without
+  shelfice); ``"bottom"`` is level ``Nr`` unconditionally (pressure
+  coordinates). A grid given as a 2D array (one level) is unaffected by
+  either mode. ``--surface-level`` on the command line.
 * **Search:** nearest-cell and nearest-vertex searches use
   ``scipy.spatial.cKDTree`` on unit vectors (chord distance, which orders
   points as great-circle distance does) when scipy is installed, and
@@ -740,23 +752,27 @@ def _resolve_options(src, defaults):
 _GRID_FIELDS = ("hFacC", "XC", "YC", "XG", "YG", "RAC")
 
 
-def read_grid(grid_dir):
-    """Global 2D ``(ny, nx)`` arrays of ``hFacC`` (level 1), ``XC``, ``YC``,
-    ``XG``, ``YG`` and ``RAC`` from MITgcm grid output (global or tiled
+def read_grid(grid_dir, surface_level="top"):
+    """Global 2D ``(ny, nx)`` arrays of ``hFacC`` (the model's surface wet
+    mask, chosen by ``surface_level``: see module notes and
+    :func:`MITgcmutils.runoff.check._surface_hfac`), ``XC``, ``YC``, ``XG``,
+    ``YG`` and ``RAC`` from MITgcm grid output (global or tiled
     ``.meta/.data``). Raises :class:`OSError` when a field can't be read."""
     from .check import _read_grid_field
-    return {name: _read_grid_field(os.fspath(grid_dir), name) for name in _GRID_FIELDS}
+    return {name: _read_grid_field(os.fspath(grid_dir), name, mode=surface_level)
+            for name in _GRID_FIELDS}
 
 
 class _Geom:
     """Flattened grid geometry: cell ``c = i + nx*j``."""
 
-    def __init__(self, grid, radius):
+    def __init__(self, grid, radius, surface_level="top"):
         #: Grid directory when the grid was read from files (for the data.exch2 default).
         self.grid_dir = None
         if isinstance(grid, (str, bytes, os.PathLike)):
             self.grid_dir = os.fsdecode(grid)
-            grid = read_grid(grid)
+            grid = read_grid(grid, surface_level=surface_level)
+        from .check import _surface_hfac
         arrays = {}
         for name in _GRID_FIELDS:
             if name not in grid:
@@ -764,7 +780,7 @@ class _Geom:
                     name, ", ".join(_GRID_FIELDS)))
             a = np.asarray(grid[name], dtype=np.float64)
             if name == "hFacC" and a.ndim == 3:
-                a = a[0]
+                a = _surface_hfac(a, surface_level)
             if a.ndim != 2:
                 raise BuildError("grid: {0} has shape {1}; expected a 2D (ny, nx) "
                                  "array".format(name, a.shape))
@@ -846,12 +862,15 @@ class WetGraph:
         return np.count_nonzero(self.neighbours >= 0, axis=1)
 
 
-def wet_graph(grid, *, connectivity=None, earth_radius=EARTH_RADIUS):
+def wet_graph(grid, *, connectivity=None, earth_radius=EARTH_RADIUS, surface_level="top"):
     """Edge-neighbour graph of the wet surface cells of ``grid`` (a grid
     directory or a dict of arrays, as for :func:`build_targets`).
     ``connectivity`` is ``"latlon"`` or ``"exch2"``; when it is None,
-    :func:`_resolve_connectivity` applies the ``data.exch2`` default or stops."""
-    geom = grid if isinstance(grid, _Geom) else _Geom(grid, earth_radius)
+    :func:`_resolve_connectivity` applies the ``data.exch2`` default or stops.
+    ``surface_level`` is the ``hFacC`` wet-mask convention (module notes),
+    ignored when ``grid`` is already a :class:`_Geom`."""
+    geom = grid if isinstance(grid, _Geom) else _Geom(grid, earth_radius,
+                                                       surface_level=surface_level)
     return _build_graph(geom, _resolve_connectivity(connectivity, geom.grid_dir))
 
 
@@ -1369,7 +1388,8 @@ def _corner_pairs(geom):
 def _snap(src, geom, opts):
     """Nearest wet cell of each source and its great-circle distance (m)."""
     if geom.wet_cells.size == 0:
-        raise BuildError("grid: no wet surface cell (hFacC > 0 at level 1 and RAC > 0)")
+        raise BuildError("grid: no wet surface cell (hFacC > 0 at the model's own "
+                         "surface level and RAC > 0)")
     index = _PointIndex(geom.centers[geom.wet_cells])
     q = _unit(src.lon, src.lat)
     d, k = index.query(q, 4)
@@ -1468,7 +1488,7 @@ class TargetTables:
 
 def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
                   spread_scale=None, cutoff=None, max_snap_distance=DEFAULT_MAX_SNAP_DISTANCE,
-                  earth_radius=EARTH_RADIUS, connectivity=None):
+                  earth_radius=EARTH_RADIUS, connectivity=None, surface_level="top"):
     """Build the source, alias and target tables (module notes, algorithm).
 
     Parameters
@@ -1478,8 +1498,8 @@ def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
         names (see :func:`read_sources`).
     grid : str, os.PathLike or dict
         MITgcm grid output directory, or a dict of global 2D arrays
-        ``hFacC`` (2D, or 3D whose level 1 is used), ``XC``, ``YC``, ``XG``,
-        ``YG`` and ``RAC``.
+        ``hFacC`` (2D, or 3D whose surface level is chosen by
+        ``surface_level``), ``XC``, ``YC``, ``XG``, ``YG`` and ``RAC``.
     emission, spread_type, spread_scale, cutoff, max_snap_distance
         Defaults for sources that don't set their own. Distances are meters or
         strings such as ``"25km"``. ``cutoff`` defaults to ``3 * spread_scale``
@@ -1494,6 +1514,12 @@ def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
         given, ``"exch2"`` is used if ``grid`` is a directory containing
         ``data.exch2``; otherwise a spread source is an error that explains
         the choice. Pointwise sources need no neighbour graph.
+    surface_level : {"top", "bottom"}
+        Which ``hFacC`` level is the wet mask (module notes,
+        ``docs/package_design.md`` decision 5): ``"top"`` (default) is each
+        column's first wet level scanning from level 1 (z coordinates, with
+        or without shelfice); ``"bottom"`` is level ``Nr`` unconditionally
+        (pressure coordinates).
 
     Returns
     -------
@@ -1523,7 +1549,7 @@ def build_targets(sources, grid, *, emission=DEFAULT_EMISSION, spread_type=None,
     opts = _resolve_options(src, {"emission": emission, "spread_type": spread_type,
                                   "spread_scale": spread_scale, "cutoff": cutoff,
                                   "max_snap_distance": max_snap_distance})
-    geom = _Geom(grid, radius)
+    geom = _Geom(grid, radius, surface_level=surface_level)
     snap_cell, snap_dist = _snap(src, geom, opts)
     graph = None
     if any(o["emission"] == "spread" for o in opts):
@@ -2115,6 +2141,12 @@ def main(argv=None):
                              "regular lat-lon block) or exch2 (cubed sphere, LLC, other "
                              "grids); default exch2 if DIR contains data.exch2, else "
                              "required")
+    parser.add_argument("--surface-level", choices=("top", "bottom"), default="top",
+                        help="which hFacC level is the wet mask (package_design.md "
+                             "decision 5): 'top' (default) scans each column for its "
+                             "first wet level from level 1 (z coordinates, with or "
+                             "without shelfice); 'bottom' is level Nr unconditionally "
+                             "(pressure coordinates)")
     parser.add_argument("--depth-range", metavar="TOP:BOTTOM",
                         help="spread every source over the wet levels this depth range "
                              "(m below the rest-state surface) overlaps, and write "
@@ -2136,7 +2168,8 @@ def main(argv=None):
                                spread_type=args.spread_type, spread_scale=args.spread_scale,
                                cutoff=args.cutoff, max_snap_distance=args.max_snap_distance,
                                earth_radius=args.earth_radius,
-                               connectivity=args.connectivity)
+                               connectivity=args.connectivity,
+                               surface_level=args.surface_level)
         if args.depth_range:
             parts = args.depth_range.split(":")
             if len(parts) != 2:
@@ -2166,7 +2199,8 @@ def main(argv=None):
     from .check import check_files
     try:
         report = check_files(args.output, grid_dir=args.grid_dir,
-                             tables_only=args.into is None)
+                             tables_only=args.into is None,
+                             surface_level=args.surface_level)
     except OSError as e:
         print("error: {0}".format(e), file=sys.stderr)
         return 2

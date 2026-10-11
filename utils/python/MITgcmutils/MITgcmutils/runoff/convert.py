@@ -2,10 +2,11 @@
 
 :func:`dense_to_sparse` reads a dense ``pkg/exf`` ``runoffFile`` (m/s, one
 global 2D record per time, big-endian float32 or float64 as ``exf_iprec``
-says), the grid (cell area ``rA`` and the surface wet mask, ``hFacC`` at
-level 1) and the exf timing settings, and writes a schema-1.0 file
-(``docs/runoff_schema.md``). :func:`sparse_to_dense` is the inverse. The
-command line is ``python -m MITgcmutils.runoff.convert`` (:func:`main`).
+says), the grid (cell area ``rA`` and the surface wet mask, ``hFacC`` at the
+model's own surface level, chosen by ``surface_level``) and the exf timing
+settings, and writes a schema-1.0 file (``docs/runoff_schema.md``).
+:func:`sparse_to_dense` is the inverse. The command line is
+``python -m MITgcmutils.runoff.convert`` (:func:`main`).
 
 Values
 ------
@@ -35,13 +36,20 @@ Values
   is zero. A source has one temperature, so cell temperatures that differ
   within a group are replaced by this mean and are not recovered by
   :func:`sparse_to_dense`.
-* A nonzero value on a land cell (``hFacC`` = 0 at level 1) and a NaN or Inf
-  value are errors that name the cell. Negative values give a warning.
-* The wet mask is level 1 of ``hFacC``, the surface level in z coordinates.
-  In pressure coordinates the surface is level ``Nr``, and level 1 is dry
-  wherever the ocean is shallower than the deepest level, so the converter
-  refuses runoff on such cells when it reads the mask from ``grid_dir``. From
-  Python, pass the surface mask as the ``hfac`` array.
+* A nonzero value on a land cell (``hFacC`` = 0 at the surface level) and a
+  NaN or Inf value are errors that name the cell. Negative values give a
+  warning.
+* The wet mask is the model's own surface level of ``hFacC``
+  (``docs/package_design.md`` decision 5,
+  :func:`MITgcmutils.runoff.check._surface_hfac`), chosen by
+  ``surface_level``: ``"top"`` (default) is each column's first wet level
+  scanning from level 1 (z coordinates, with or without shelfice -- the
+  level-1 hardcode this replaces, bit-for-bit, on a grid without shelfice);
+  ``"bottom"`` is level ``Nr`` unconditionally (pressure coordinates). Pass
+  ``--surface-level bottom`` (or let it auto-detect nothing -- this module
+  does not read a run's ``data`` file, unlike the checker's command line) for
+  a pressure-coordinate ``grid_dir``. From Python, an already-2D ``hfac``
+  array (or ``rac``) bypasses the mode entirely.
 
 Timing: how exf settings map to the time axis
 ---------------------------------------------
@@ -181,14 +189,20 @@ def read_dense(path, nx, ny, prec=32):
     return a.reshape(a.size // rec, ny, nx)
 
 
-def _grid(grid_dir, rac, hfac, xc, yc):
-    """``(rac, hfac, xc, yc)`` as float64 ``(ny, nx)`` arrays; xc, yc may be None."""
+def _grid(grid_dir, rac, hfac, xc, yc, surface_level="top"):
+    """``(rac, hfac, xc, yc)`` as float64 ``(ny, nx)`` arrays; xc, yc may be
+    None. A 3D ``hfac`` (or one read from ``grid_dir``) is reduced to its
+    model surface level by ``surface_level``
+    (:func:`MITgcmutils.runoff.check._surface_hfac`): ``"top"`` (default) is
+    each column's first wet level scanning from level 1 (z coordinates, with
+    or without shelfice); ``"bottom"`` is level ``Nr`` unconditionally
+    (pressure coordinates). An already-2D ``hfac`` is unaffected."""
     if grid_dir is not None:
         from .check import CheckIOError, _read_grid_field
 
         def get(name, required=True):
             try:
-                return _read_grid_field(str(grid_dir), name)
+                return _read_grid_field(str(grid_dir), name, mode=surface_level)
             except CheckIOError as e:
                 if required:
                     raise ConvertError(str(e))
@@ -202,7 +216,8 @@ def _grid(grid_dir, rac, hfac, xc, yc):
     rac = np.asarray(rac, dtype=np.float64)
     hfac = np.asarray(hfac, dtype=np.float64)
     if hfac.ndim == 3:
-        hfac = hfac[0]
+        from .check import _surface_hfac
+        hfac = _surface_hfac(hfac, surface_level)
     if rac.ndim != 2 or hfac.shape != rac.shape:
         raise ConvertError("rac and hfac must be 2D (ny, nx) arrays of one shape; got "
                            "{0} and {1}".format(rac.shape, hfac.shape))
@@ -488,8 +503,9 @@ def _tables(sets, temps, rac, hfac, nx, groups, split_varying, share_tol):
             r, c = np.argwhere(land)[0]
             raise ConvertError(
                 "dense runoff is {0:g} m/s on land at {1}, record {2}: hFacC is 0 at "
-                "level 1 there ({3} land cells have nonzero runoff)".format(
-                    a[r, c], _cell_label(c, nx), r + 1, int(land.any(axis=0).sum())))
+                "the model's own surface level there ({3} land cells have nonzero "
+                "runoff)".format(a[r, c], _cell_label(c, nx), r + 1,
+                                int(land.any(axis=0).sum())))
         if (a < 0.0).any():
             r, c = np.argwhere(a < 0.0)[0]
             warnings.warn("dense runoff is negative in {0} values, first {1:g} m/s at "
@@ -687,7 +703,7 @@ def dense_to_sparse(dense, out, *, grid_dir=None, rac=None, hfac=None, xc=None, 
                     repeat_cycle=0.0, years=None, calendar="standard", clim_year=None,
                     temperature=None, sources=None, split_varying=False,
                     share_tol=DEFAULT_SHARE_TOL, flux_dtype="f8", grid_name=None,
-                    attrs=None, zlib=True):
+                    attrs=None, zlib=True, surface_level="top"):
     """Convert a dense exf runoff file to a sparse schema-1.0 NetCDF file.
 
     Parameters
@@ -702,8 +718,9 @@ def dense_to_sparse(dense, out, *, grid_dir=None, rac=None, hfac=None, xc=None, 
     grid_dir, rac, hfac, xc, yc
         The grid: a directory of MITgcm grid output (``RAC``, ``hFacC`` and
         optionally ``XC``, ``YC``, read with ``MITgcmutils.mds.rdmds``), or
-        the arrays, each ``(ny, nx)`` (``hfac`` may be 3D; level 1 is used).
-        ``(ny, nx)`` is the shape of the dense record.
+        the arrays, each ``(ny, nx)`` (``hfac`` may be 3D, reduced to its
+        model surface level by ``surface_level``). ``(ny, nx)`` is the shape
+        of the dense record.
     prec : 32 or 64
         ``exf_iprec`` of the dense files.
     period, startdate1, startdate2, start_time, repeat_cycle, years, calendar,
@@ -727,6 +744,12 @@ def dense_to_sparse(dense, out, *, grid_dir=None, rac=None, hfac=None, xc=None, 
         to round-off; float32 does not (about 6e-8 relative).
     grid_name, attrs
         ``mitgcm_grid_name`` and further global attributes.
+    surface_level : {"top", "bottom"}
+        Which ``hFacC`` level is the wet mask (module notes,
+        ``docs/package_design.md`` decision 5): ``"top"`` (default) is each
+        column's first wet level scanning from level 1 (z coordinates, with
+        or without shelfice); ``"bottom"`` is level ``Nr`` unconditionally
+        (pressure coordinates).
 
     Returns
     -------
@@ -740,7 +763,7 @@ def dense_to_sparse(dense, out, *, grid_dir=None, rac=None, hfac=None, xc=None, 
         or that has no fractions in [0, 1], or a timing that schema 1.0
         cannot express. Negative runoff only warns.
     """
-    rac, hfac, xc, yc = _grid(grid_dir, rac, hfac, xc, yc)
+    rac, hfac, xc, yc = _grid(grid_dir, rac, hfac, xc, yc, surface_level=surface_level)
     ny, nx = rac.shape
     if flux_dtype not in ("f8", "f4"):
         raise ConvertError("flux_dtype must be 'f8' or 'f4'")
@@ -813,7 +836,7 @@ def dense_to_sparse(dense, out, *, grid_dir=None, rac=None, hfac=None, xc=None, 
 
 
 def sparse_to_dense(path, out=None, *, variable=S.FLUX_VAR, grid_dir=None, rac=None,
-                    prec=None, fill=0.0):
+                    prec=None, fill=0.0, surface_level="top"):
     """Dense ``(nrec, ny, nx)`` records of a sparse runoff file.
 
     For ``runoff_flux`` the result is the runoff in m/s, ``sum_s flux_s *
@@ -827,7 +850,10 @@ def sparse_to_dense(path, out=None, *, variable=S.FLUX_VAR, grid_dir=None, rac=N
 
     ``prec`` (32 or 64) is the precision of the result; the default is the
     file's ``dense_precision`` attribute, or 64. With ``out`` the records are
-    also written as a big-endian MITgcm binary file.
+    also written as a big-endian MITgcm binary file. ``surface_level``
+    (module notes) only matters when ``grid_dir`` is given and ``rac`` is not:
+    it is passed to the ``hFacC`` read that :func:`_grid` needs to validate
+    the grid's shape, even though this function uses no wetness value itself.
     """
     import netCDF4
     ds = netCDF4.Dataset(path, "r")
@@ -845,7 +871,7 @@ def sparse_to_dense(path, out=None, *, variable=S.FLUX_VAR, grid_dir=None, rac=N
                 if "dense_precision" in ds.ncattrs() else 64
         if grid_dir is not None or rac is not None:
             area = _grid(grid_dir, rac, np.ones((ny, nx)) if rac is not None else None,
-                         None, None)[0]
+                         None, None, surface_level=surface_level)[0]
             if area.shape != (ny, nx):
                 raise ConvertError("the grid has shape {0}, not ({1}, {2})".format(
                     area.shape, ny, nx))
@@ -914,6 +940,11 @@ def main(argv=None):
                    help="convert a sparse file back to a dense big-endian binary")
     p.add_argument("--grid-dir", help="directory with MITgcm grid output (RAC, hFacC, "
                                       "and XC, YC if present)")
+    p.add_argument("--surface-level", choices=("top", "bottom"), default="top",
+                   help="which hFacC level is the wet mask (package_design.md decision "
+                        "5): 'top' (default) scans each column for its first wet level "
+                        "from level 1 (z coordinates, with or without shelfice); "
+                        "'bottom' is level Nr unconditionally (pressure coordinates)")
     p.add_argument("--prec", type=int, choices=(32, 64), default=None,
                    help="exf_iprec of the dense files (default 32; with --to-dense, "
                         "the precision recorded in the sparse file)")
@@ -949,7 +980,8 @@ def main(argv=None):
     try:
         if args.to_dense:
             a = sparse_to_dense(args.input, args.output, variable=args.variable,
-                                grid_dir=args.grid_dir, prec=args.prec)
+                                grid_dir=args.grid_dir, prec=args.prec,
+                                surface_level=args.surface_level)
             print("{0}: {1} records of {2} x {3}".format(args.output, a.shape[0],
                                                          a.shape[2], a.shape[1]))
             return 0
@@ -962,7 +994,7 @@ def main(argv=None):
             calendar=args.calendar, clim_year=args.clim_year,
             temperature=args.temperature, sources=args.sources,
             split_varying=args.split_varying, flux_dtype=args.flux_dtype,
-            grid_name=args.grid_name)
+            grid_name=args.grid_name, surface_level=args.surface_level)
     except ConvertError as e:
         print("error: {0}".format(e), file=sys.stderr)
         return 1
@@ -974,7 +1006,7 @@ def main(argv=None):
     if args.no_check:
         return 0
     from .check import check_files
-    report = check_files(paths, grid_dir=args.grid_dir)
+    report = check_files(paths, grid_dir=args.grid_dir, surface_level=args.surface_level)
     print(report.format_text())
     return report.exit_code()
 

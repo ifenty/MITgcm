@@ -15,6 +15,7 @@ Library use::
 Command line::
 
     python -m MITgcmutils.runoff.check FILE [FILE ...] [--grid-dir DIR]
+                                       [--surface-level {top,bottom}]
                                        [--strict] [--json OUT] [--tables-only]
 
 Exit status: 0 no errors, 1 errors (or warnings with ``--strict``), 2 usage
@@ -95,6 +96,15 @@ Implementation notes that the schema leaves to the checker:
   number of levels of ``hFacC`` and wet at the target cell. Neither knows
   ``RNF_applyAsRain``: the model refuses a non-surface target on its legacy
   route at run time (``RNF_INIT_FIXED``).
+* R01 (land) and R04 (schema 1.1 wetness) read ``hFacC`` at the model's own
+  surface level, chosen by ``surface_level``/``--surface-level``
+  (:func:`_surface_hfac`, ``docs/package_design.md`` decision 5), not
+  unconditionally level 1: ``"top"`` (default) is each column's first wet
+  level scanning from level 1 (``kSurfC``; correct for z coordinates, with or
+  without shelfice), ``"bottom"`` is level ``Nr`` unconditionally (pressure
+  coordinates). The command line auto-detects this from ``buoyancyRelation``
+  of ``--grid-dir``'s own ``data`` file when ``--surface-level`` is not
+  given (RUNOFF-032).
 * R03 compares unpacked ``target_lon``/``target_lat``, which may be packed.
   The model reads them only to check them against ``XC``/``YC``, and skips
   that check when they are packed, so packing them stays an S07 pass.
@@ -110,6 +120,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass, field
 
@@ -118,12 +129,16 @@ import numpy as np
 from . import schema as S
 
 __all__ = ["Finding", "Report", "CheckIOError", "check_files", "main",
-           "DEFAULT_BLOCK_BYTES", "MAX_DETAILS"]
+           "DEFAULT_BLOCK_BYTES", "MAX_DETAILS", "SURFACE_LEVEL_MODES"]
 
 #: Upper bound on the bytes of one block of time-series records.
 DEFAULT_BLOCK_BYTES = 50 * 2**20
 #: Findings listed individually per (rule, variable) before summarizing.
 MAX_DETAILS = 20
+#: The two surface-level conventions of package_design.md decision 5
+#: (:func:`_surface_hfac`): "top" (default) for z coordinates, with or
+#: without shelfice; "bottom" for pressure coordinates.
+SURFACE_LEVEL_MODES = ("top", "bottom")
 
 
 class CheckIOError(OSError):
@@ -1481,16 +1496,90 @@ def _check_units(ctx):
 # Grid checks (R01-R04)
 
 
+def _surface_hfac(hfac, mode="top"):
+    """2D ``(ny, nx)`` surface ``hFacC`` slice of a 2D or 3D ``(nr, ny, nx)``
+    array, under the model's own surface convention
+    (``docs/package_design.md`` decision 5; RUNOFF-032).
+
+    A 2D ``hfac`` (one level) is returned unchanged, whichever ``mode``: there
+    is only one level to choose from. Otherwise ``mode`` is one of
+    :data:`SURFACE_LEVEL_MODES`:
+
+    * ``"top"`` (default): the z-coordinate surface, with or without
+      shelfice. Each column's value is that of its first wet level
+      (``hFacC != 0``), scanning from level 1 downward -- the same scan
+      ``model/src/ini_masks_etc.F:177-191`` uses to compute ``kSurfC``
+      (``model/inc/GRID.h:522-531``). Without shelfice this is level 1
+      wherever the column is wet at all (an ordinary z-coordinate column has
+      no cells above the surface), so "top" is bit-for-bit the level-1
+      hardcode this replaces on every grid without shelfice. A column dry at
+      every level has no wet level and is left at 0, the land value a
+      level-1 hardcode already reported.
+    * ``"bottom"``: the pressure-coordinate surface, level ``Nr``
+      unconditionally (``model/src/apply_forcing.F:466-474``,
+      ``pkg/exf/exf_mapfields.F:89-90``), regardless of the local wetness
+      pattern.
+
+    Raises ``ValueError`` for any other ``mode``, or an ``hfac`` that is
+    neither 2D nor 3D.
+    """
+    hfac = np.asarray(hfac, dtype=np.float64)
+    if hfac.ndim == 2:
+        return hfac
+    if hfac.ndim != 3:
+        raise ValueError("hfac must be a 2D or 3D array, not shape {0}".format(hfac.shape))
+    if mode not in SURFACE_LEVEL_MODES:
+        raise ValueError("mode {0!r} is not one of {1}".format(
+            mode, ", ".join(SURFACE_LEVEL_MODES)))
+    if mode == "bottom":
+        return hfac[-1]
+    surf = np.zeros(hfac.shape[1:], dtype=np.float64)
+    for k in range(hfac.shape[0] - 1, -1, -1):
+        wet = hfac[k] != 0
+        surf[wet] = hfac[k][wet]
+    return surf
+
+
+def _detect_surface_level(run_dir):
+    """``"top"`` or ``"bottom"``, from ``buoyancyRelation`` of ``run_dir``'s
+    ``data`` namelist text (``model/src/ini_parms.F:446-457``): ``'OCEANICP'``
+    or ``'ATMOSPHERIC'`` select pressure coordinates (``"bottom"``); every
+    other value, including a ``data`` with no ``buoyancyRelation`` at all
+    (the model's own default, ``'OCEANIC'``, ``model/src/set_defaults.F:176``),
+    is z coordinates (``"top"``). Returns None when ``run_dir`` is None or has
+    no ``data`` file, so a caller can fall back to the "top" default without
+    claiming to have detected it.
+
+    No namelist parser is available here (f90nml is not a project
+    dependency); this reads the raw text with the same kind of
+    ``name\\s*=\\s*value`` regex the project already uses to pull one
+    namelist value out of a ``data`` file (e.g. ``tests/rnf/budget_check.py``
+    ``nr_of``), rather than a full parse.
+    """
+    if run_dir is None:
+        return None
+    path = os.path.join(str(run_dir), "data")
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        text = f.read()
+    m = re.search(r"buoyancyRelation\s*=\s*['\"]([^'\"]*)['\"]", text)
+    if m is not None and m.group(1).strip() in ("OCEANICP", "ATMOSPHERIC"):
+        return "bottom"
+    return "top"
+
+
 class _Grid:
     """MITgcm grid output read lazily from ``grid_dir`` with :func:`rdmds`."""
 
-    def __init__(self, grid_dir):
+    def __init__(self, grid_dir, mode="top"):
         self.dir = str(grid_dir)
+        self.mode = mode
         self._cache = {}
 
     def get(self, name):
         if name not in self._cache:
-            self._cache[name] = _read_grid_field(self.dir, name)
+            self._cache[name] = _read_grid_field(self.dir, name, mode=self.mode)
         return self._cache[name]
 
     def get_levels(self, name):
@@ -1517,13 +1606,18 @@ def _read_grid_levels(grid_dir, name):
     return a[None] if a.ndim == 2 else a
 
 
-def _read_grid_field(grid_dir, name):
-    """Global 2D ``(ny, nx)`` array of ``name`` (level 1 for hFacC).
+def _read_grid_field(grid_dir, name, mode="top"):
+    """Global 2D ``(ny, nx)`` array of ``name``: for ``hFacC`` the model's
+    surface slice chosen by ``mode`` (:func:`_surface_hfac`; default "top",
+    bit-for-bit the old level-1 hardcode on a grid without shelfice), else
+    the field unchanged.
 
     Accepts a global ``name.meta/.data`` pair or tiled
     ``name.XXX.YYY.meta/.data`` files, as :func:`MITgcmutils.mds.rdmds` does.
+    Reads every level of ``hFacC`` (needed to resolve either mode), not only
+    level 1.
     """
-    from ..mds import rdmds, readmeta
+    from ..mds import rdmds
     base = os.path.join(grid_dir, name)
     metas = (glob.glob(base + ".[0-9][0-9][0-9].[0-9][0-9][0-9].meta")
              or glob.glob(base + ".meta"))
@@ -1531,12 +1625,12 @@ def _read_grid_field(grid_dir, name):
         raise CheckIOError("--grid-dir {0}: no {1}.meta or {1}.XXX.YYY.meta "
                            "found".format(grid_dir, name))
     try:
-        ndims = len(readmeta(metas[0])[0])
-        # Level 1 of a 3D hFacC; a 2D file has no level dimension.
-        a = rdmds(base, lev=[0]) if name == "hFacC" and ndims >= 3 else rdmds(base)
+        a = np.asarray(rdmds(base), dtype=np.float64)
     except Exception as e:  # noqa: BLE001 - report any reader failure as I/O
         raise CheckIOError("cannot read {0}: {1}".format(base, e))
-    return np.asarray(a, dtype=np.float64)
+    if name == "hFacC":
+        a = _surface_hfac(a, mode)
+    return a
 
 
 def _check_grid(ctx, grid):
@@ -1547,6 +1641,9 @@ def _check_grid(ctx, grid):
     packed. R03 compares their unpacked values
     (``scale_factor``/``add_offset`` applied), so it is the stricter of the
     two and warns where the model is silent.
+
+    R01 and R04 read ``hFacC`` at the model's own surface level, which is
+    ``grid.mode`` (:func:`_surface_hfac`), not unconditionally level 1.
     """
     if ctx.nx is None or ctx.targets is None:
         return
@@ -1569,8 +1666,8 @@ def _check_grid(ctx, grid):
     if hf is not None:
         land = rows[hf[cells[rows]] == 0]
         ctx.add_many("R01", "target_cell", land, lambda k: {
-            "text": "{0} is on land (hFacC = 0 at level 1 in {1})".format(
-                ctx.target(k), grid.dir),
+            "text": "{0} is on land (hFacC = 0 at the surface level, mode={1}, "
+                    "in {2})".format(ctx.target(k), grid.mode, grid.dir),
             "source_index": t["source"][k] if src_ok[k] else None})
         # R04: a schema-1.1 target_level is an absolute level; it has to be a
         # level of the grid and wet at the target cell, as RNF_INIT_FIXED
@@ -1869,7 +1966,7 @@ def _check_tables_only(ctx, multi):
 
 
 def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES,
-                tables_only=False):
+                tables_only=False, surface_level="top"):
     """Check one runoff file, or several files of one data set, against schema 1.1 (or 1.0).
 
     Parameters
@@ -1888,6 +1985,17 @@ def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES,
         example the output of :func:`MITgcmutils.runoff.targets.write_targets`).
         The time and time-series rules are skipped and each file gets one
         ``S10`` (I) finding listing them (see the module notes).
+    surface_level : {"top", "bottom"}
+        Which ``hFacC`` level R01/R04 (``grid_dir``) treat as the model's
+        surface cell (:func:`_surface_hfac`, ``docs/package_design.md``
+        decision 5): ``"top"`` (default) is each column's first wet level
+        scanning from level 1, the z-coordinate convention (``kSurfC``,
+        correct with or without shelfice); ``"bottom"`` is level ``Nr``
+        unconditionally, the pressure-coordinate convention. The command line
+        (:func:`main`) auto-detects this from ``buoyancyRelation`` of
+        ``--grid-dir``'s own ``data`` file when ``--surface-level`` is not
+        given; this function does not auto-detect, because it is not told
+        which directory, if any, is a run directory.
 
     Returns
     -------
@@ -1903,7 +2011,7 @@ def check_files(paths, grid_dir=None, *, max_block_bytes=DEFAULT_BLOCK_BYTES,
         paths = [paths]
     paths = [os.fspath(p) for p in paths]
     report = Report(files=paths, grid_dir=None if grid_dir is None else str(grid_dir))
-    grid = None if grid_dir is None else _Grid(grid_dir)
+    grid = None if grid_dir is None else _Grid(grid_dir, mode=surface_level)
     multi = len(paths) > 1
     ref, snaps = None, []
     for path in paths:
@@ -1955,7 +2063,19 @@ def main(argv=None):
     parser.add_argument("files", nargs="+", metavar="FILE",
                         help="runoff file(s); several yearly files in time order")
     parser.add_argument("--grid-dir", metavar="DIR",
-                        help="MITgcm grid output (hFacC, RAC, XC, YC) for R01-R04")
+                        help="MITgcm grid output (hFacC, RAC, XC, YC) for R01-R04; also "
+                             "the run directory --surface-level auto-detects from, when "
+                             "it holds a data file")
+    parser.add_argument("--surface-level", choices=SURFACE_LEVEL_MODES, default=None,
+                        help="which hFacC level is the model's surface cell for R01/R04 "
+                             "(package_design.md decision 5): 'top' scans each column for "
+                             "its first wet level from level 1 (kSurfC; z coordinates, "
+                             "with or without shelfice); 'bottom' is level Nr "
+                             "unconditionally (pressure coordinates). Without this flag, "
+                             "and with --grid-dir, it is auto-detected from "
+                             "buoyancyRelation of --grid-dir/data ('OCEANICP' or "
+                             "'ATMOSPHERIC': bottom; otherwise, including no data file: "
+                             "top); with no --grid-dir, the default is 'top'")
     parser.add_argument("--strict", action="store_true", help="fail on warnings too")
     parser.add_argument("--json", metavar="OUT", help="write the report as JSON")
     parser.add_argument("--tables-only", action="store_true",
@@ -1966,9 +2086,10 @@ def main(argv=None):
         args = parser.parse_args(argv)
     except SystemExit as e:  # usage error (2) or --help (0)
         return int(e.code or 0)
+    surface_level = args.surface_level or _detect_surface_level(args.grid_dir) or "top"
     try:
         report = check_files(args.files, grid_dir=args.grid_dir,
-                             tables_only=args.tables_only)
+                             tables_only=args.tables_only, surface_level=surface_level)
     except OSError as e:
         print("error: {0}".format(e), file=sys.stderr)
         return 2
