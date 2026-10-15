@@ -381,7 +381,7 @@ C--   2. Dimensions and required variables
      &     errNC, myThid )
 
       IF ( RNF_nSrcFile.LT.1 .OR. RNF_nTgtFile.LT.1 ) THEN
-        WRITE(msgBuf,'(A,2(A,I8))') 'RNF_INIT_FIXED: RNF: the file',
+        WRITE(msgBuf,'(A,A,I8,A,I8,A)') 'RNF_INIT_FIXED: RNF: the file',
      &    ' has', RNF_nSrcFile, ' source(s) and', RNF_nTgtFile,
      &    ' target entry(ies)'
         CALL PRINT_ERROR( msgBuf, myThid )
