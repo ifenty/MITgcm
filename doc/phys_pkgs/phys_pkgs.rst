@@ -98,6 +98,7 @@ Ocean Packages
    kl10.rst
    bulk_force.rst
    exf.rst
+   rnf.rst
    cal.rst
 
 Atmosphere Packages
