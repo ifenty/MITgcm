@@ -453,16 +453,13 @@ C                             its tests on the runoff array the upper
 C                             bound is skipped with useRNF and the
 C                             sflux one has the runoff added back. That
 C                             leaves the negative test - the SIGN, at
-C                             nIter0 - and, only where ALLOW_RUNOFTEMP
-C                             is compiled (cs32 defines it, lab_sea
-C                             does not), a 36 m/s ceiling that the
-C                             runoff-TEMPERATURE test reads from the
-C                             runoff array where it means runoftemp
-C                             (exf_check_range.F, the ALLOW_RUNOFTEMP
-C                             block): an upstream misnaming, not
-C                             conditioned on useRNF, and 6.5E4 times
-C                             above this bound on the lab_sea cell, so
-C                             it constrains nothing in practice.
+C                             nIter0. (Until RUNOFF-037 the runoff-
+C                             TEMPERATURE test of the ALLOW_RUNOFTEMP
+C                             block of exf_check_range.F also read a
+C                             36 m/s ceiling from the runoff array; it
+C                             now tests runoftemp, so it constrains
+C                             the temperature and no longer the
+C                             runoff.)
 C                             Nothing therefore bounds the magnitude of
 C                             xx_runoff; closing that is a pkg/ctrl
 C                             question and not this bound's.

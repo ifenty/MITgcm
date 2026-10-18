@@ -262,11 +262,11 @@ C     for the dense path.
 # ifdef ALLOW_RUNOFTEMP
 C     Runoff temperature.
           IF ( (runoftemp(i,j,bi,bj) .LT. -2. .OR.
-     &         runoff(i,j,bi,bj) .GT. 36 ) .AND.
+     &         runoftemp(i,j,bi,bj) .GT. 36 ) .AND.
      &         maskC(i,j,ks,bi,bj) .NE. 0. ) THEN
            WRITE(standardMessageUnit,'(A,5(1X,I6),2X,D22.15)')
      &          'EXF WARNING: runoftemp out of range at bi,bj,i,j,it= ',
-     &          bi, bj, i, j, myIter, runoff(i,j,bi,bj)
+     &          bi, bj, i, j, myIter, runoftemp(i,j,bi,bj)
            exferr = 1
           ENDIF
 # endif /* ALLOW_RUNOFTEMP */
