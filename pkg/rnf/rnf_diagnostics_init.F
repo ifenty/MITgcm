@@ -105,6 +105,7 @@ C     diagTitle :: local string (80c): description of field in diagnostic
       CHARACTER*16  diagCode
       CHARACTER*16  diagUnits
       CHARACTER*(80) diagTitle
+      CHARACTER*(MAX_LEN_MBUF) msgBuf
 
 C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
 
@@ -124,8 +125,8 @@ C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
      I     diagName, diagCode, diagUnits, diagTitle, 0, myThid )
 
       diagName  = 'RNFtemp '
-      diagTitle = 'pkg/rnf flux-weighted runoff temperature, sources'
-     &          //' with one; 0: none has one, or no runoff'
+      diagTitle = 'pkg/rnf flux-weighted runoff temperature,'
+     &          //' 0: no source has one'
       diagUnits = 'degC            '
       diagCode  = 'SM      U1      '
       CALL DIAGNOSTICS_ADDTOLIST( diagNum,
@@ -163,6 +164,19 @@ C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
       diagCode  = 'SM      U1      '
       CALL DIAGNOSTICS_ADDTOLIST( diagNum,
      I     diagName, diagCode, diagUnits, diagTitle, 0, myThid )
+
+C--   The names RNFtfNN and RNFtrNN hold the tracer number in two
+C     digits (I2.2). From 100 on the field prints '**', the names
+C     collide and DIAGNOSTICS_ADDTOLIST only updates the older entry,
+C     so stop here (RUNOFF-047).
+      IF ( RNF_nTr .GT. 99 ) THEN
+        WRITE(msgBuf,'(2A,I6,A)') 'RNF_DIAGNOSTICS_INIT: RNF: the',
+     &    ' diagnostics RNFtfNN and RNFtrNN need RNF_nTr <= 99, got',
+     &    RNF_nTr, ' (RNF_SIZE.h)'
+        CALL PRINT_ERROR( msgBuf, myThid )
+        CALL ALL_PROC_DIE( 0 )
+        STOP 'ABNORMAL END: S/R RNF_DIAGNOSTICS_INIT'
+      ENDIF
 
       DO iTr = 1, RNF_nTr
         WRITE(diagName,'(A,I2.2,A)') 'RNFtf', iTr, ' '
