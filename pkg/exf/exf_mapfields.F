@@ -64,7 +64,7 @@ C     == global variables ==
 #ifdef ALLOW_RNF
 # include "RNF_SIZE.h"
 # include "RNF.h"
-#endif
+#endif /* ALLOW_RNF */
 #ifdef ALLOW_AUTODIFF_TAMC
 # include "tamc.h"
 #endif
@@ -207,7 +207,7 @@ C     (RNF_applyAsRain), see S/R RNF_EXF_RUNOFF
           IF ( runoftempfile .NE. ' '
 #ifdef ALLOW_RNF
      &         .OR. ( RNF_applyT .AND. RNF_applyAsRain )
-#endif
+#endif /* ALLOW_RNF */
      &       ) THEN
 C--   Add energy content of RunOff
            DO j = 1, sNy

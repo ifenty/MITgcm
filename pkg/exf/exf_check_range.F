@@ -99,7 +99,7 @@ C     this test does not.
           sfluxLoc = sflux(i,j,bi,bj)
 #ifdef ALLOW_RUNOFF
           IF ( useRNF ) sfluxLoc = sfluxLoc + runoff(i,j,bi,bj)
-#endif
+#endif /* ALLOW_RUNOFF */
           IF ( ABS(sfluxLoc) .GT. 1.E-6 .AND.
      &         maskC(i,j,ks,bi,bj) .NE. 0. ) THEN
            WRITE(standardMessageUnit,'(A,5(1X,I6),2X,D22.15)')

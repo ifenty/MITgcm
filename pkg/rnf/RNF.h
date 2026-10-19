@@ -51,7 +51,7 @@ C     RNF_usePtracers    :: apply runoff_ptracer_* if the file has them
 C     RNF_monFreq        :: monitor interval (s), default monitorFreq
 C     RNF_debugLev       :: message level, default debugLevel
 C     RNF_applyAsRain    :: which of the two routes applies the runoff
-C                           (package design, decision 2; RUNOFF-046):
+C                           (package design, decision 2):
 C                           F (default): the GENERALIZED route. The
 C                           volume is a mass source in the model's
 C                           addMass array at the level of each target
@@ -63,7 +63,7 @@ C                           1 or 2 (RNF_CHECK). Nothing reaches the
 C                           exf runoff field, so pkg/seaice,
 C                           pkg/thsice and pkg/bling do not see this
 C                           runoff.
-C                           T: the LEGACY surface route of RUNOFF-031:
+C                           T: the LEGACY surface route:
 C                           the volume in the exf runoff field
 C                           (RNF_EXF_RUNOFF), the heat through exf
 C                           runoftemp and Qnet, the salt and tracers
@@ -222,8 +222,7 @@ C                           RNF_srcFluxMax with every target on one
 C                           lab_sea cell apply 1.285228E-3 m/s and the
 C                           run ended normally, with no message of any
 C                           kind, before this check existed (measured
-C                           on RUNOFF-030 by review B, re-measured on
-C                           RUNOFF-040 against the committed build:
+C                           against the committed build:
 C                           exit 0, "Execution ended Normally", 0 EXF
 C                           WARNING lines, one non-zero cell, applied
 C                           1.2852284E-03 m/s at (i,j) = (12,2)).
@@ -265,10 +264,9 @@ C                           asynchronously stepped set-up that left
 C                           the default would make the dilution
 C                           reading wrong by 72x while the volume
 C                           reading stayed right.
-C                           RUNOFF-041 (owner decision 2026-10-07,
-C                           both reviewers recommending against
-C                           bounding, Arch accepting): settled as a
-C                           REPORT, not a bound change. RNF_SUMMARY
+C                           Settled (owner decision 2026-10-07, both
+C                           reviewers recommending against bounding)
+C                           as a REPORT, not a bound change. RNF_SUMMARY
 C                           prints, only when dTtracerLev(1) differs
 C                           from deltaTFreeSurf, a line naming both
 C                           steps and their ratio and stating that
@@ -453,7 +451,7 @@ C                             its tests on the runoff array the upper
 C                             bound is skipped with useRNF and the
 C                             sflux one has the runoff added back. That
 C                             leaves the negative test - the SIGN, at
-C                             nIter0. (Until RUNOFF-037 the runoff-
+C                             nIter0. (Formerly the runoff-
 C                             TEMPERATURE test of the ALLOW_RUNOFTEMP
 C                             block of exf_check_range.F also read a
 C                             36 m/s ceiling from the runoff array; it
@@ -612,7 +610,7 @@ C                           pkg/shelfice) for a schema-1.0 file and
 C                           for a file without target_level; the
 C                           file's target_level itself, an absolute
 C                           MITgcm level index, for a schema-1.1 file
-C                           (RNF_INIT_FIXED, RUNOFF-046). Entries of
+C                           (RNF_INIT_FIXED). Entries of
 C                           one cell (i,j) may carry different levels:
 C                           a source spread over a depth range is a
 C                           source with one entry per level
@@ -657,7 +655,7 @@ C     (RNF_applyAsRain = T) puts every entry at the surface level of
 C     its column. The generalized route does not use them to apply
 C     anything: RNF_ADD_MASS and RNF_TENDENCY_APPLY_T/S/PTR work on
 C     the target entries themselves, each at its own RNF_tgtK, so no
-C     three-dimensional companion of these fields exists (RUNOFF-046).
+C     three-dimensional companion of these fields exists.
 C     They are still built on that route, as column totals, for the
 C     input-field diagnostics and the monitor.
 C
@@ -875,7 +873,7 @@ C     RNF_lagFlds :: the terms use the fields of the previous step,
 C                    i.e. branch N without staggerTimeStep, on the
 C                    legacy route only: the generalized route uses
 C                    the fields of the current step, the step its
-C                    addMass belongs to (RUNOFF-046)
+C                    addMass belongs to
 C     RNF_curIter :: iteration of RNF_vflx and the other dense fields
 C                    (RNF_noIter: nothing built yet)
 C     RNF_apIter  :: iteration of the RNF_ap* fields, the ones the

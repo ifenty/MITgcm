@@ -40,8 +40,8 @@ C       loses its volume, because SHELFICE_FORCING_SURF sets EmPmR to
 C       zero under the shelf. SHI_update_kTopC is tested only when
 C       useShelfIce is true: SHELFICE_READPARMS returns before it
 C       sets the default otherwise.
-C     o on the generalized route (RNF_applyAsRain = F, the default,
-C       RUNOFF-046): a build without ALLOW_ADDFLUID, selectAddFluid
+C     o on the generalized route (RNF_applyAsRain = F, the default):
+C       a build without ALLOW_ADDFLUID, selectAddFluid
 C       other than 1 or 2, or a non-blank addMassFile (see the test
 C       below for why each one breaks the addMass contribution of
 C       RNF_ADD_MASS). The model's own temp_addMass and salt_addMass
@@ -66,8 +66,8 @@ C       the temperature would be read and silently not applied.
 C       RNF_useTemp = .FALSE. reads such a file on purpose.
 C     o on the legacy route, a file with runoff_temperature
 C       (RNF_applyT) together with
-C       temp_EvPrRn set, in a build without ALLOW_ATM_TEMP (RUNOFF-045,
-C       owner decision 2026-10-09, option b). The model gives runoff
+C       temp_EvPrRn set, in a build without ALLOW_ATM_TEMP (owner
+C       decision 2026-10-09, option b). The model gives runoff
 C       water the temperature temp_EvPrRn whenever it is set
 C       (model/src/external_forcing_surf.F:299-305), exf cancels that
 C       assumption for runoff only inside "#ifdef ALLOW_ATM_TEMP"
@@ -78,15 +78,15 @@ C       would silently enter at temp_EvPrRn + T_r - theta (branches N
 C       and L) or T_r - theta + temp_EvPrRn - tRef (branch U) instead
 C       of at the source temperature T_r. This is a pre-existing
 C       defect of the dense runoftempfile path, which the sparse path
-C       inherited when RUNOFF-031 moved its heat onto the same exf
+C       inherited when its heat moved onto the same exf
 C       code; it is reported upstream and not fixed here (that is
 C       option c, declined). temp_EvPrRn = UNSET_RL (the default), or
 C       RNF_useTemp = .FALSE., avoids it. RNF_applyT is set by
 C       RNF_INIT_FIXED, which has already run when this routine is
 C       called (see above).
 C     o pkg/longstep stepping the ptracers with LS_nIter other than 1
-C       while the file feeds at least one of them (RUNOFF-043, owner
-C       decision 2026-10-09, option C): the tracer term is that of the
+C       while the file feeds at least one of them (owner decision
+C       2026-10-09, option C): the tracer term is that of the
 C       current step while pkg/longstep applies the long-step average
 C       of the freshwater flux (LS_fwFlux), so the two would belong to
 C       different times. LS_nIter = 1, or a file without tracers, is
@@ -283,7 +283,7 @@ C     route; the generalized route applies it as a tendency
 #if defined(ALLOW_EXF) && defined(ALLOW_RUNOFF)
 # ifndef ALLOW_ATM_TEMP
 C--   The runoff heat without exf's ALLOW_ATM_TEMP cancellation of its
-C     own temp_EvPrRn term (RUNOFF-045): a pre-existing defect of the
+C     own temp_EvPrRn term: a pre-existing defect of the
 C     dense runoftempfile path, reported upstream and not fixed here.
 C     temp_EvPrRn and UNSET_RL are the model's own (PARAMS.h,
 C     EEPARAMS.h), already included above with no extra header.
@@ -298,7 +298,7 @@ C     runoff heat, so neither the defect nor its refusal applies.
      &    ' EXF_OPTIONS.h (without it exf does not cancel its own'
         CALL PRINT_ERROR( msgBuf, myThid )
         WRITE(msgBuf,'(2A)') 'RNF_CHECK: temp_EvPrRn term for runoff,',
-     &    ' which then enters at the wrong temperature; RUNOFF-045),'
+     &    ' which then enters at the wrong temperature),'
         CALL PRINT_ERROR( msgBuf, myThid )
         WRITE(msgBuf,'(2A)') 'RNF_CHECK: or temp_EvPrRn = UNSET_RL',
      &    ' (the default) in data, or RNF_useTemp=.FALSE. in data.rnf'

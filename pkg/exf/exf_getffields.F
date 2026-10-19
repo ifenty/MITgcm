@@ -42,7 +42,7 @@ C     == global variables ==
 #ifdef ALLOW_RNF
 # include "RNF_SIZE.h"
 # include "RNF.h"
-#endif
+#endif /* ALLOW_RNF */
 
 #ifdef ALLOW_CTRL
 # include "CTRL_SIZE.h"

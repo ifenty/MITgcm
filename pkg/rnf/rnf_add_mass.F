@@ -8,7 +8,7 @@ C !INTERFACE: ==========================================================
 
 C !DESCRIPTION:
 C     The volume of the generalized runoff route (RNF_applyAsRain = F,
-C     the default; package design, decision 2, RUNOFF-046): add the
+C     the default; package design, decision 2): add the
 C     runoff of the current step to the model's interior mass source
 C     addMass [kg/s], at the level of each target entry,
 C

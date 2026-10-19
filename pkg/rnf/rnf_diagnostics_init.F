@@ -29,7 +29,7 @@ C     depend only on the input, and RNF_DIAGNOSTICS_FILL fills them
 C     once per step from RNF_FIELDS_BUILD. The runoff's own
 C     contributions to the surface flux fields it feeds, one per
 C     property, each in the units and sign of the field it is part of
-C     (RUNOFF-031), so that a budget can separate the runoff from the
+C     so that a budget can separate the runoff from the
 C     rest of TFLUX, SFLUX and the ptracers surface forcing:
 C
 C       RNFqnet  :: the heat EXF_MAPFIELDS adds to Qnet for the runoff
@@ -50,7 +50,7 @@ C     surface fields are, and the model applies them at the surface
 C     level of the column. RNFqnet, RNFsflx and RNFtfNN are the
 C     legacy route's (RNF_applyAsRain = T) and are filled only there.
 C
-C     The generalized route (RNF_applyAsRain = F, RUNOFF-046) has
+C     The generalized route (RNF_applyAsRain = F) has
 C     three-dimensional ones instead, since its targets can be at any
 C     level:
 C
@@ -64,8 +64,8 @@ C     each the PHYSICAL term [(mX) - m_X*X(k)]*mass2rUnit*D of
 C     RNF_TENDENCY_APPLY_T/S/PTR, i.e. what the runoff does to the
 C     property in total, including the share the model's own generic
 C     addMass term already provides. RNFgT, RNFgS and RNFtrNN are the
-C     names RUNOFF-013 gave the tendency diagnostics of the original,
-C     surface-only, form of those routines, which RUNOFF-031 removed.
+C     names of the tendency diagnostics of an earlier, surface-only,
+C     form of those routines, which was removed.
 C
 C     RNFtemp and RNFsaln report 0 at a cell this package's own
 C     convention calls undefined: no runoff at all (RNFtemp and
@@ -92,13 +92,18 @@ C     myThid ::  my Thread Id number
       INTEGER myThid
 CEOP
 
+#ifdef ALLOW_RNF
 #ifdef ALLOW_DIAGNOSTICS
 C     !LOCAL VARIABLES:
-C     diagNum   :: diagnostics number in the (long) list of available diag.
+C     diagNum   :: diagnostics number in the (long) list of
+C                  available diag.
 C     diagName  :: local short name (8c) of a diagnostics
-C     diagCode  :: local parser field with characteristics of the diagnostics
-C     diagUnits :: local string (16c): physical units of a diagnostic field
-C     diagTitle :: local string (80c): description of field in diagnostic
+C     diagCode  :: local parser field with characteristics of the
+C                  diagnostics
+C     diagUnits :: local string (16c): physical units of a
+C                  diagnostic field
+C     diagTitle :: local string (80c): description of field in
+C                  diagnostic
       INTEGER       diagNum
       INTEGER       iTr
       CHARACTER*8   diagName
@@ -168,7 +173,7 @@ C---+----1----+----2----+----3----+----4----+----5----+----6----+----7-|--+----|
 C--   The names RNFtfNN and RNFtrNN hold the tracer number in two
 C     digits (I2.2). From 100 on the field prints '**', the names
 C     collide and DIAGNOSTICS_ADDTOLIST only updates the older entry,
-C     so stop here (RUNOFF-047).
+C     so stop here.
       IF ( RNF_nTr .GT. 99 ) THEN
         WRITE(msgBuf,'(2A,I6,A)') 'RNF_DIAGNOSTICS_INIT: RNF: the',
      &    ' diagnostics RNFtfNN and RNFtrNN need RNF_nTr <= 99, got',
@@ -225,6 +230,7 @@ C--   The generalized route (RNF_applyAsRain = F)
       ENDDO
 
 #endif /* ALLOW_DIAGNOSTICS */
+#endif /* ALLOW_RNF */
 
       RETURN
       END

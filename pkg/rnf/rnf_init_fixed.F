@@ -39,7 +39,7 @@ C        of the tile belongs to it;
 C     5. the checks of an owned target: on land, at a level that is
 C        not wet in its column, at a level other than the surface
 C        with RNF_applyAsRain (the legacy route takes surface targets
-C        only, owner decision 2026-10-10, RUNOFF-046), beyond an open
+C        only, owner decision 2026-10-10), beyond an open
 C        boundary (maskInC), under an ice shelf (kTopC), when the
 C        file has target_cell_area, against rA, and when it has
 C        target_lon/target_lat, against the cell's own centre
@@ -47,7 +47,7 @@ C        XC,YC. The last one is what catches a target moved to
 C        another cell of the same shape: across a cubed-sphere facet
 C        boundary the two cells have rA that is bitwise equal, so no
 C        area tolerance separates them, while their centres are far
-C        apart (RUNOFF-033). It is skipped, with a warning saying
+C        apart. It is skipped, with a warning saying
 C        why, for a file without those two variables (they are
 C        optional in schema 1.0), for one that packs them, and on a
 C        grid whose XC,YC are not degrees;
@@ -87,7 +87,7 @@ C !USES: ===============================================================
 #include "RNF.h"
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  myThid               :: my thread Id number
@@ -313,7 +313,7 @@ C--   1. Open the file and read the global attributes
           errCount = errCount + 1
         ENDIF
 C--     The minor version decides what target_level means (runoff
-C       schema 1.1, RUNOFF-046): in 1.0 it may only be 1, the surface
+C       schema 1.1): in 1.0 it may only be 1, the surface
 C       cell of the column; from 1.1 on it is an absolute MITgcm level
 C       index. A version without a readable minor part ("1") is 1.0.
         minVer = 0
@@ -794,7 +794,7 @@ C              cell of a column lies between kSurfC and kLowC
 C-             the legacy route puts the runoff in the surface fields:
 C              it is refused for any target that is not the surface
 C              cell of its column, whatever the other targets are
-C              (owner decision 2026-10-10, RUNOFF-046)
+C              (owner decision 2026-10-10)
                 refuse = 7
                ELSEIF ( maskInC(iLoc,j,bi,bj) .EQ. 0. _d 0 ) THEN
                 refuse = 2
@@ -819,7 +819,7 @@ C              the cell the index selected. This is what catches a
 C              target moved to another cell of the same shape, which
 C              no area tolerance can catch however tight: across a
 C              cubed-sphere facet boundary the two cells have rA
-C              that is bitwise equal (RUNOFF-033).
+C              that is bitwise equal.
 C              Great-circle distance between the two centres, from
 C              the dot product of the unit vectors. ACOS is poorly
 C              conditioned next to 1, but the error it can produce

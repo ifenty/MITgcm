@@ -14,7 +14,7 @@ C     RNF_DIAGNOSTICS_INIT. They depend only on the input, i.e. on the
 C     dense fields RNF_FIELDS_BUILD has just built, so this is called
 C     once per step from RNF_FIELDS_LOAD, at the end of
 C     RNF_FIELDS_BUILD -- unlike RNFqnet, RNFsflx and RNFtfNN
-C     (RUNOFF-031), which are filled where their own term is computed
+C     which are filled where their own term is computed
 C     because that term also depends on the model state.
 C
 C     RNFvflx = RNF_vflx and RNFmflx = RNF_mflx are the dense fields
@@ -52,7 +52,7 @@ C     file (docs/runoff_schema.md), so there that count is also the
 C     number of distinct sources feeding the cell, with no separate
 C     bookkeeping of which source ids have been seen. T03 keys on
 C     (source, cell, level), so a schema-1.1 source spread over several
-C     levels of the cell counts once per level (RUNOFF-046).
+C     levels of the cell counts once per level.
 
 C !USES: ===============================================================
       IMPLICIT NONE

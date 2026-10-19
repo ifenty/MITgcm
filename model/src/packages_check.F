@@ -380,9 +380,9 @@ C---  Continue with standard packages (with standard usePKG flag)
 
 #ifdef ALLOW_RNF
       IF ( useRNF ) CALL RNF_CHECK( myThid )
-#else
+#else /* ALLOW_RNF */
       IF ( useRNF ) CALL PACKAGES_ERROR_MSG( 'RNF', ' ', myThid )
-#endif
+#endif /* ALLOW_RNF */
 
 #ifdef ALLOW_THSICE
       IF ( useThSIce ) CALL THSICE_CHECK( myThid )

@@ -212,7 +212,7 @@ C     the external forcing package that receives the runoff field
       IF ( useRNF ) THEN
 # ifdef ALLOW_DEBUG
         IF (debugMode) CALL DEBUG_CALL('RNF_FIELDS_LOAD',myThid)
-# endif
+# endif /* ALLOW_DEBUG */
         CALL RNF_FIELDS_LOAD( myTime, myIter, myThid )
 C-    generalized route (RNF_applyAsRain=F): the runoff volume as an
 C     addMass source at each target level, after the reset above

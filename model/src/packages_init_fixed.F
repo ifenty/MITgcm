@@ -503,7 +503,7 @@ C--   Initialise fixed array for Float pkg
       IF (useRNF) THEN
 # ifdef ALLOW_DEBUG
         IF (debugMode) CALL DEBUG_CALL('RNF_INIT_FIXED',myThid)
-# endif
+# endif /* ALLOW_DEBUG */
         CALL RNF_INIT_FIXED( myThid )
       ENDIF
 #endif /* ALLOW_RNF */

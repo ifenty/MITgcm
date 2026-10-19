@@ -420,7 +420,7 @@ C  compiling pkg/autodiff (with IF-statements inside stic_init_varia.F)
       IF (useRNF) THEN
 # ifdef ALLOW_DEBUG
        IF (debugMode) CALL DEBUG_CALL('RNF_INIT_VARIA',myThid)
-# endif
+# endif /* ALLOW_DEBUG */
        CALL RNF_INIT_VARIA( myThid )
       ENDIF
 #endif /* ALLOW_RNF */

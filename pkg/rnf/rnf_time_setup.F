@@ -34,7 +34,7 @@ C
 C     Anything else stops the run. "yearly" sampling (one record per
 C     calendar year) has no exf mode and schema 1.0 puts its time at
 C     the midpoint of the year, so mapping it needs its own code; it
-C     is refused rather than approximated (RUNOFF-001 review 1).
+C     is refused rather than approximated.
 C
 C     **The repeat cycle of a fixed-period climatology is anchored on
 C     the file's real dates, not on a nominal calendar year.** The
@@ -53,7 +53,7 @@ C     docstring carries the figures; on that file, taking the day of
 C     the model's year as the phase first differs on
 C     1981-01-01 00:00, and re-dating each record to the same month and
 C     day of the model's year first differs on 1980-02-15 23:00. (Not
-C     1980-02-29: the carry-forward of RUNOFF-002 named that date, and
+C     1980-02-29, which an earlier note named, and
 C     scanning 43825 hourly dates from 1978-12-01 to 1983-12-01 gave
 C     these two instead.)
 C
@@ -84,10 +84,10 @@ C !USES: ===============================================================
 #include "RNF.h"
 #ifdef ALLOW_CAL
 # include "cal.h"
-#endif
+#endif /* ALLOW_CAL */
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  fid                  :: NetCDF id of the open sparse runoff file

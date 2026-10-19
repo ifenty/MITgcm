@@ -174,8 +174,9 @@ C       RNF_DIAGNOSTICS_FILL has already visited this step.
      &                             myThid )
         ENDDO
 
-C--     rnfVol is already Sum RNF_vflx*rA, which is Sum m*rA/rhoConstFresh
-C       with m = rhoConstFresh*RNF_vflx: the rhoConstFresh cancels, so no
+C--     rnfVol is already Sum RNF_vflx*rA, which is
+C       Sum m*rA/rhoConstFresh with m = rhoConstFresh*RNF_vflx: the
+C       rhoConstFresh cancels, so no
 C       further division is made here (an earlier draft of this routine
 C       divided again, which tests/rnf/diagnostics_check.py's monitor
 C       comparison against the file's own source sum caught at a factor

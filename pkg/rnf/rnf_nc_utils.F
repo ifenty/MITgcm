@@ -41,7 +41,7 @@ C !USES: ===============================================================
 #include "RNF.h"
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  caller               :: name of the calling routine
@@ -118,7 +118,7 @@ C !USES: ===============================================================
 #include "RNF.h"
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  fid                  :: NetCDF id of the open file
@@ -151,7 +151,7 @@ C !LOCAL VARIABLES: ====================================================
       CHARACTER*(MAX_LEN_MBUF) msgBuf
 #ifdef HAVE_NETCDF
       INTEGER errNC, attType, nVals
-#endif
+#endif /* HAVE_NETCDF */
 CEOP
 
       DO i = 1, LEN(attVal)
@@ -224,7 +224,7 @@ C !USES: ===============================================================
 #include "RNF.h"
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  fid                  :: NetCDF id of the open file
@@ -260,7 +260,7 @@ C !LOCAL VARIABLES: ====================================================
 #ifdef HAVE_NETCDF
       INTEGER errNC, attType, nVals
       Real*8  tmpVal(1)
-#endif
+#endif /* HAVE_NETCDF */
 CEOP
 
       attVal = 0. _d 0
@@ -325,7 +325,7 @@ C !USES: ===============================================================
 #include "RNF.h"
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  fid                  :: NetCDF id of the open file
@@ -355,7 +355,7 @@ C !LOCAL VARIABLES: ====================================================
       INTEGER errNC, varId, nDims, nChar
       INTEGER dimIds(NF_MAX_VAR_DIMS)
       INTEGER iStart(2), iCount(2)
-#endif
+#endif /* HAVE_NETCDF */
 CEOP
 
       DO i = 1, LEN(srcId)
@@ -519,12 +519,12 @@ C !USES: ===============================================================
 #ifdef ALLOW_PTRACERS
 # include "PTRACERS_SIZE.h"
 # include "PTRACERS_PARAMS.h"
-#endif
+#endif /* ALLOW_PTRACERS */
 #include "RNF_SIZE.h"
 #include "RNF.h"
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  fid                  :: NetCDF id of the open file
@@ -555,8 +555,8 @@ C  nMatch               :: ptracers whose name matches this one
 # ifdef ALLOW_PTRACERS
       INTEGER iTr, nMatch, iHit, nmLen, nPtr
       CHARACTER*(MAX_LEN_FNAM) pNam
-# endif
-#endif
+# endif /* ALLOW_PTRACERS */
+#endif /* HAVE_NETCDF */
 CEOP
 
       RNF_hasTemp = .FALSE.
@@ -696,7 +696,7 @@ CEOP
             RNF_trNam(RNF_nTrUse) = trNam
 #ifdef ALLOW_PTRACERS
             RNF_trPtr(RNF_nTrUse) = iHit
-#endif
+#endif /* ALLOW_PTRACERS */
           ENDIF
         ENDIF
    10   CONTINUE
@@ -787,7 +787,7 @@ C !USES: ===============================================================
 #include "RNF.h"
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  fileName             :: file of the set to read from
@@ -823,7 +823,7 @@ C  dumSum               :: sum of a series that has no use for one
 #ifdef HAVE_NETCDF
       INTEGER errNC, fid
       INTEGER timDimId, nRecLoc
-#endif
+#endif /* HAVE_NETCDF */
 CEOP
 
       nBad = 0
@@ -1010,7 +1010,7 @@ C !USES: ===============================================================
 #include "RNF.h"
 #ifdef HAVE_NETCDF
 # include "netcdf.inc"
-#endif
+#endif /* HAVE_NETCDF */
 
 C !INPUT PARAMETERS: ===================================================
 C  fid                  :: NetCDF id of the open file
@@ -1069,7 +1069,7 @@ C !LOCAL VARIABLES: ====================================================
       INTEGER iStart(2), iCount(2)
       LOGICAL hasFill, hasMiss
       _RL fillVal, missVal
-#endif
+#endif /* HAVE_NETCDF */
 CEOP
 
       valSum = 0. _d 0

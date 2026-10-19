@@ -30,7 +30,7 @@ C     report which runoff bounds the run was held to: EXF_CHECK_RANGE
 C     conditions two of its tests on useRNF, so a log that named
 C     neither relaxation nor the two package bounds that replace them
 C     would leave a reader unable to tell which bounds applied at all.
-C     A sixth, conditional line (RUNOFF-041) follows them only when
+C     A sixth, conditional line follows them only when
 C     dTtracerLev(1) differs from deltaTFreeSurf: it names both steps
 C     and their ratio and says that RNF_cellVolMax's dilution reading
 C     (not its primary volume reading) is looser by that factor. It is
@@ -61,7 +61,7 @@ C !LOCAL VARIABLES: ====================================================
 C  blkLin               :: blank line
 C  msgBuf               :: message buffer
 C  dtRatio              :: dTtracerLev(1)/deltaTFreeSurf, when they
-C                          differ (RUNOFF-041)
+C                          differ
       CHARACTER*1 blkLin
       CHARACTER*(MAX_LEN_MBUF) msgBuf
       CHARACTER*(RNF_idLen) trNam
@@ -177,9 +177,7 @@ C     reader of this log would otherwise have no way to tell which
 C     bounds applied, so all five statements are printed: the two
 C     relaxations, the two package bounds that replace them - per
 C     source in RNF_NC_READ_ONE and per cell in RNF_EXF_RUNOFF - and
-C     the negative-runoff test that is NOT skipped. Review A of
-C     RUNOFF-030 correction round 2 found the freshwater one missing
-C     here; the per-cell line is RUNOFF-040.
+C     the negative-runoff test that is NOT skipped.
       WRITE(msgBuf,'(2A)') 'RNF_SUMMARY: pkg/exf skips its runoff',
      &  ' upper bound (1.E-6 m/s) with useRNF=.TRUE.;'
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
@@ -212,7 +210,7 @@ C      its per-cell bound is RNF_ADD_MASS's, at the target level
       CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
      &                    SQUEEZE_RIGHT, myThid )
 
-C--   RUNOFF-041: RNF_cellVolMax's "fractional dilution" reading (as
+C--   RNF_cellVolMax's "fractional dilution" reading (as
 C     opposed to its primary "fractional volume change" reading, RNF.h)
 C     holds only where dTtracerLev(1) = deltaTFreeSurf. Report rather
 C     than bound (both reviewers recommended against bounding with

@@ -42,9 +42,9 @@ CEOP
 #ifdef ALLOW_RNF
       CALL RNF_FIELDS_BUILD( myTime, myIter, myThid )
 C--   As EXF_GETFORCING calls EXF_DIAGNOSTICS_FILL and EXF_MONITOR
-C     (pkg/exf/exf_getforcing.F:377-380): unconditioned by ALLOW_DIAGNOSTICS
-C     or ALLOW_MONITOR here, because each routine's own body is wrapped by
-C     its #ifdef and does nothing without it.
+C     (pkg/exf/exf_getforcing.F:377-380): unconditioned by
+C     ALLOW_DIAGNOSTICS or ALLOW_MONITOR here, because each routine's
+C     own body is wrapped by its #ifdef and does nothing without it.
       CALL RNF_DIAGNOSTICS_FILL( myTime, myIter, myThid )
       CALL RNF_MONITOR( myTime, myIter, myThid )
 #endif /* ALLOW_RNF */
@@ -163,9 +163,8 @@ C          the PmEpR rebuilt from the pickup may carry runoff that an
 C          earlier segment applied and whose temperature and salinity
 C          this file cannot know (package design, decision 3, "Time
 C          before the first record"). The case that runs this
-C          refusal is the case sync_refuse of tests/rnf/restart_check.py
-C          (RUNOFF-050). The branch itself runs in the sync case of
-C          the same file (RUNOFF-022): the
+C          refusal is the case sync_refuse of the restart test. The
+C          branch itself runs in the sync case of that test: the
 C          restart reproduces the applied runoff bitwise and the
 C          state to 10.7 digits, which is the model's own level there.
             IF ( RNF_recPeriod.GT.0. _d 0 .AND.

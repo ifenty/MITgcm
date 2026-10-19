@@ -392,7 +392,7 @@ C----- pkgs with a standard "usePKG" On/Off switch in "data.pkg":
 #endif
 #ifdef ALLOW_RNF
       CALL PACKAGES_PRINT_MSG( useRNF,        'RNF',         ' ' )
-#endif
+#endif /* ALLOW_RNF */
 #ifdef ALLOW_THSICE
       CALL PACKAGES_PRINT_MSG( useThSIce,     'ThSIce',      ' ' )
 #endif

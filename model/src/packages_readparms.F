@@ -296,7 +296,7 @@ C--   if useICEFRONT=T, set ICEFRONT parameters; otherwise just return
 #ifdef ALLOW_RNF
 C--   if useRNF=T, set RNF parameters; otherwise just return
       CALL RNF_READPARMS( myThid )
-#endif
+#endif /* ALLOW_RNF */
 
 #ifdef ALLOW_SEAICE
 C--   if useSEAICE=T, set SEAICE parameters; otherwise just return

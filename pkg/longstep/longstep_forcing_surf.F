@@ -31,7 +31,7 @@ c #include "DYNVARS.h"
 #ifdef ALLOW_RNF
 # include "RNF_SIZE.h"
 # include "RNF.h"
-#endif
+#endif /* ALLOW_RNF */
 
 C !INPUT PARAMETERS: ===================================================
 C  bi,bj                :: tile indices

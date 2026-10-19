@@ -1,13 +1,13 @@
 #include "RNF_OPTIONS.h"
 C--  File rnf_tendency_apply.F: the heat, salt and tracer terms of the
 C--  generalized runoff route (RNF_applyAsRain = F, the default;
-C--  package design, decisions 3 and 4; RUNOFF-046)
+C--  package design, decisions 3 and 4)
 C--   Contents
 C--   o RNF_TENDENCY_APPLY_T
 C--   o RNF_TENDENCY_APPLY_S
 C--   o RNF_TENDENCY_APPLY_PTR
 C--
-C--  Restored from the routines of the same names that RUNOFF-031
+C--  Restored from the routines of the same names that an earlier
 C--  removed (fork commit 46684c3af, which moved the then surface-only
 C--  terms onto the surface flux fields; that route survives as the
 C--  legacy one, RNF_applyAsRain = T) and generalized in two ways:
@@ -374,7 +374,7 @@ C     !USES:
 # include "PTRACERS_SIZE.h"
 # include "PTRACERS_PARAMS.h"
 # include "PTRACERS_FIELDS.h"
-#endif
+#endif /* ALLOW_PTRACERS */
 #include "RNF_SIZE.h"
 #include "RNF.h"
 

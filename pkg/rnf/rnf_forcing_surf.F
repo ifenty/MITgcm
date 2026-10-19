@@ -8,7 +8,7 @@ C--
 C--  At a surface target the runoff salt and tracers enter the model
 C--  the way every other surface flux does, through surfaceForcingS
 C--  and surfaceForcingPTr (package design, decisions 3 and 4, as
-C--  revised by RUNOFF-031), so that KPP, the SFLUX diagnostic and the
+C--  revised), so that KPP, the SFLUX diagnostic and the
 C--  ptracers surface path see them. The runoff heat takes the exf
 C--  path instead (RNF_EXF_RUNOFF fills runoftemp, and EXF_MAPFIELDS
 C--  adds it to Qnet), because that is the convention MITgcm already
@@ -211,7 +211,7 @@ C     otherwise erase the term. The diagnostic is filled on the first
 C     call only, so that it is filled once per step. RNF_CHECK refuses
 C     a runoff tracer under pkg/longstep with LS_nIter other than 1,
 C     where this term (of the current step) and LS_fwFlux (a long-step
-C     average) would belong to different times (RUNOFF-043).
+C     average) would belong to different times.
 C
 C     The variable-to-ptracer match is made once, at init, by
 C     RNF_NC_SERIES: RNF_trPtr(n) is the ptracer that runoff tracer n
@@ -234,7 +234,7 @@ C     !USES:
 # include "PTRACERS_SIZE.h"
 # include "PTRACERS_PARAMS.h"
 # include "PTRACERS_FIELDS.h"
-#endif
+#endif /* ALLOW_PTRACERS */
 #include "RNF_SIZE.h"
 #include "RNF.h"
 

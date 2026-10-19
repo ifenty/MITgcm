@@ -38,7 +38,7 @@ C     === Global variables ===
 #ifdef ALLOW_RNF
 # include "RNF_SIZE.h"
 # include "RNF.h"
-#endif
+#endif /* ALLOW_RNF */
 
 C     !INPUT/OUTPUT PARAMETERS:
 C     === Routine arguments ===

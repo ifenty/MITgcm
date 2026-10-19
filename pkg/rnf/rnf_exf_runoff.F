@@ -94,7 +94,7 @@ C     (pkg/exf/exf_mapfields.F, the ALLOW_RUNOFTEMP block, which is
 C     enabled for RNF_applyT as well as for a runoftempfile). That is
 C     MITgcm's existing convention for the heat of runoff, so the heat
 C     reaches KPP, TFLUX and the sea-ice packages as the dense path's
-C     does (package design, decision 3, revised by RUNOFF-031). The
+C     does (package design, decision 3). The
 C     field needs ALLOW_RUNOFTEMP, which RNF_CHECK requires of a file
 C     with runoff_temperature. In each cell
 C

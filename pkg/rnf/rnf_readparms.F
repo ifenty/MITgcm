@@ -58,7 +58,7 @@ C-    pkg RNF is not used
 C-    Track pkg activation status:
          RNFisON = .FALSE.
 C-    EXF_MAPFIELDS reads RNF_applyT and RNF_applyAsRain whenever
-C     pkg/rnf is compiled (RUNOFF-031, RUNOFF-046), and RNF_INIT_FIXED,
+C     pkg/rnf is compiled, and RNF_INIT_FIXED,
 C     which sets the first, is not called without useRNF: give both a
 C     value here. With RNF_applyT false the EXF_MAPFIELDS condition is
 C     false whatever RNF_applyAsRain is.
@@ -116,7 +116,7 @@ C Open and read the data.rnf file
 C Close the open data file
 #ifdef SINGLE_DISK_IO
       CLOSE(iUnit)
-#else
+#else /* SINGLE_DISK_IO */
       CLOSE(iUnit,STATUS='DELETE')
 #endif /* SINGLE_DISK_IO */
 
