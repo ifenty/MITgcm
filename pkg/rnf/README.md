@@ -285,7 +285,7 @@ Each one stops the run with an error that names the parameter.
 | `runoffconst` not 0 | `RNF_CHECK` | the package would overwrite it without notice |
 | `exf_outscal_sflux` not 1 | `RNF_CHECK` | it scales runoff in `EmPmR` but not in the other places that use the field |
 | `SHI_update_kTopC` with `useShelfIce` | `RNF_CHECK` | a moving ice-shelf edge can cover a target cell, which then loses its volume |
-| `USE_OLD_EXTERNAL_FORCING` defined | `RNF_CHECK` | the package has no hooks in the old forcing routines |
+| `USE_OLD_EXTERNAL_FORCING` defined, with `RNF_applyAsRain = .TRUE.` | `RNF_CHECK` | the legacy route has no hooks in the old forcing routines; the generalized route has its `RNF_TENDENCY_APPLY_T/S` calls there (unrun, no experiment compiles that path), so it is not refused |
 | a file with `runoff_temperature` in a build without `ALLOW_RUNOFTEMP` | `RNF_CHECK` | the heat goes through the exf `runoftemp` field, which exists only with that option, as for a dense `runoftempfile`; `RNF_useTemp=.FALSE.` reads the file without it |
 | pkg/longstep with `LS_nIter` ≠ 1 and a file that feeds a ptracer | `RNF_CHECK` | the tracer term of the current step would be applied against the long-step average of the freshwater flux; `LS_nIter = 1` or `RNF_usePtracers=.FALSE.` |
 
