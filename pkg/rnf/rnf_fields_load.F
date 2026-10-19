@@ -162,9 +162,10 @@ C          far back; taking the fields as zero was rejected, because
 C          the PmEpR rebuilt from the pickup may carry runoff that an
 C          earlier segment applied and whose temperature and salinity
 C          this file cannot know (package design, decision 3, "Time
-C          before the first record"). No case is enrolled for this
-C          refusal yet (RUNOFF-050). The branch itself runs in the
-C          sync case of tests/rnf/restart_check.py (RUNOFF-022): the
+C          before the first record"). The case that runs this
+C          refusal is the case sync_refuse of tests/rnf/restart_check.py
+C          (RUNOFF-050). The branch itself runs in the sync case of
+C          the same file (RUNOFF-022): the
 C          restart reproduces the applied runoff bitwise and the
 C          state to 10.7 digits, which is the model's own level there.
             IF ( RNF_recPeriod.GT.0. _d 0 .AND.
