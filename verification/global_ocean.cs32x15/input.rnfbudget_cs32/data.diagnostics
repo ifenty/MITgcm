@@ -1,0 +1,33 @@
+# Budget-closure oracle of tests/rnf/budget_check.py.
+# Snapshots (frequency < 0) through MDS (diag_mnc = .FALSE.) in float64
+# (fileFlags 'D'), one per time step:
+#   EXFroff  :: the exf runoff field, which RNF_EXF_RUNOFF has set to
+#               RNF_vflx, i.e. the volume flux per unit area applied
+#   RNFqnet  :: the runoff heat pkg/rnf hands to Qnet [W/m^2]
+#   RNFsflx  :: the runoff salt flux it adds to surfaceForcingS [g/m^2/s]
+#   RNFtfNN  :: the flux of runoff tracer NN it adds to surfaceForcingPTr,
+#               i.e. of the NN-th runoff_ptracer_* variable of the file
+#               (lab_sea only)
+#   ForcTrNN :: the forcing tendency of ptracer NN (PTRACERS_INTEGRATE's
+#               gTrForc), i.e. what that ptracer actually received
+# The one tendency stream, ForcTrNN, is level 1 only: that is the surface level
+# of every column of these set-ups (z coordinates, no pkg/shelfice), and
+# the only level at which the terms are non-zero.
+ &DIAGNOSTICS_LIST
+  diag_mnc = .FALSE.,
+  fields(1,1) = 'EXFroff ',
+  fileName(1) = 'rnfBudV',
+  frequency(1) = -86400.0,
+  fileFlags(1) = 'D       ',
+  fields(1,2) = 'RNFqnet ',
+  fileName(2) = 'rnfBudT',
+  frequency(2) = -86400.0,
+  fileFlags(2) = 'D       ',
+  fields(1,3) = 'RNFsflx ',
+  fileName(3) = 'rnfBudS',
+  frequency(3) = -86400.0,
+  fileFlags(3) = 'D       ',
+ &
+
+ &DIAG_STATIS_PARMS
+ &

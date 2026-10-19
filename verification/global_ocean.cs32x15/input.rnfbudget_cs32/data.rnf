@@ -1,0 +1,10 @@
+# Written by tests/rnf/budget_check.py.
+# RNF_debugLev = 3 (debLevC) makes RNF_FIELDS_LOAD print,
+# at every step, the records it bracketed and the weight
+# of the earlier one. That trace is what names the record
+# each dump applied; it only prints and changes no value.
+ &RNF_PARM01
+  RNF_file = 'runoff_budget.nc',
+  RNF_debugLev = 3,
+  RNF_applyAsRain = .TRUE.,
+ &
